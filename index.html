@@ -13,12 +13,13 @@
         #pageContainer { display: flex; flex-wrap: wrap; justify-content: center; gap: 10px; }
         .pdfPage { position: relative; border: 1px solid #ccc; padding: 5px; cursor: grab; }
         .pdfPage img { width: 100px; height: auto; display: block; }
-        .remove-btn { position: absolute; top: 2px; right: 2px; background: red; color: white; border: none; cursor: pointer; }
+        .remove-btn { position: absolute; top: 2px; right: 2px; color: white; border: none; cursor: pointer; }
     </style>
 </head>
 <body>
-
+<img src="logo.png" style="height: 100px; float left" /><br style="clear:both;" />
     <h2>PDF Organizer & Merger</h2>
+
     <input type="file" id="pdfFiles" multiple accept="application/pdf">
     <div id="pageContainer"></div>
     <button onclick="mergePDFs()">Merge PDFs</button>
