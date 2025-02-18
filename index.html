@@ -23,9 +23,9 @@
 <img src="logo.png" style="height: 100px; float left" /><br style="clear:both;" />
     <h2>PDF Organizer & Merger</h2>
     <input type="file" id="pdfFiles" multiple accept="application/pdf">
-    <a onclick="document.getElementById('pdfFiles').click()"><img src="addfile.jpg" style="height:50px" /></a>
+    <button style="background-color: orange;" onclick="document.getElementById('pdfFiles').click()">+ Add More Files</button>
     <div id="pageContainer"></div>
-    <button onclick="mergePDFs()">Merge PDFs</button>
+    <button style="background-color: cyan; padding: 10px; margin-top:10px" onclick="mergePDFs()">Merge PDFs</button><br/><br/>
     <a id="downloadLink" style="display: none; margin-bottom: 100px;" download="merged.pdf">Download Merged PDF</a>
 
     <script>
@@ -125,6 +125,18 @@
             downloadLink.href = url;
             downloadLink.style.display = 'block';
             downloadLink.textContent = 'Download Merged PDF';
+            // Auto-click the download link
+            downloadLink.click();
+
+            // Reset everything after download
+            setTimeout(resetApp, 1000);
+        }
+
+        function resetApp() {
+            pages = [];
+            document.getElementById("pageContainer").innerHTML = "";
+            document.getElementById("pdfFiles").value = "";
+            document.getElementById("downloadLink").style.display = "none";
         }
     </script>
 
