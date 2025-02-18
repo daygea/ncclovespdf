@@ -12,26 +12,26 @@
         #pdfFiles { margin: 20px; }
         #pageContainer { display: flex; flex-wrap: wrap; justify-content: center; gap: 10px; }
         .pdfPage { position: relative; border: 1px solid #ccc; padding: 5px; cursor: grab; }
-        .pdfPage img { width: 100px; height: auto; display: block; }
-        .remove-btn { position: absolute; top: 2px; right: 2px; color: white; border: none; cursor: pointer; }
+        .pdfPage img { width: 100px; height: auto; display: block; transform-origin: center; transition: transform 0.2s; }
+        .controls { display: flex; justify-content: space-between; margin-top: 5px; }
+        .btn { background: #007bff; color: white; border: none; padding: 5px; cursor: pointer; margin: 2px; }
+        .remove-btn {}
+        .rotate-btn { background: orange; }
     </style>
 </head>
 <body>
 <img src="logo.png" style="height: 100px; float left" /><br style="clear:both;" />
     <h2>PDF Organizer & Merger</h2>
-
     <input type="file" id="pdfFiles" multiple accept="application/pdf">
+    <a onclick="document.getElementById('pdfFiles').click()"><img src="addfile.jpg" style="height:50px" /></a>
     <div id="pageContainer"></div>
     <button onclick="mergePDFs()">Merge PDFs</button>
-    <a id="downloadLink" style="display: none;" download="merged.pdf">Download Merged PDF</a>
+    <a id="downloadLink" style="display: none; margin-bottom: 100px;" download="merged.pdf">Download Merged PDF</a>
 
     <script>
         let pages = [];
 
         document.getElementById('pdfFiles').addEventListener('change', async function (event) {
-            pages = []; // Reset pages
-            document.getElementById('pageContainer').innerHTML = ""; // Clear UI
-
             for (const file of event.target.files) {
                 const arrayBuffer = await file.arrayBuffer();
                 const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
@@ -46,7 +46,7 @@
                     await page.render({ canvasContext: context, viewport }).promise;
 
                     const imgSrc = canvas.toDataURL();
-                    const pageData = { file, pageIndex: i, imgSrc };
+                    const pageData = { file, pageIndex: i, imgSrc, rotation: 0 };
                     pages.push(pageData);
 
                     const pageDiv = document.createElement("div");
@@ -55,17 +55,28 @@
 
                     const img = document.createElement("img");
                     img.src = imgSrc;
+                    img.dataset.index = pages.length - 1;
+
+                    const controls = document.createElement("div");
+                    controls.classList.add("controls");
+
+                    const rotateBtn = document.createElement("button");
+                    rotateBtn.textContent = "↻";
+                    rotateBtn.classList.add("btn", "rotate-btn");
+                    rotateBtn.onclick = () => rotatePage(pageDiv.dataset.index, img);
 
                     const removeBtn = document.createElement("button");
                     removeBtn.textContent = "❌";
-                    removeBtn.classList.add("remove-btn");
+                    removeBtn.classList.add("btn", "remove-btn");
                     removeBtn.onclick = () => {
                         pages.splice(pageDiv.dataset.index, 1);
                         pageDiv.remove();
                     };
 
+                    controls.appendChild(rotateBtn);
+                    controls.appendChild(removeBtn);
                     pageDiv.appendChild(img);
-                    pageDiv.appendChild(removeBtn);
+                    pageDiv.appendChild(controls);
                     document.getElementById("pageContainer").appendChild(pageDiv);
                 }
             }
@@ -83,6 +94,11 @@
             });
         });
 
+        function rotatePage(index, img) {
+            pages[index].rotation = (pages[index].rotation + 90) % 360;
+            img.style.transform = `rotate(${pages[index].rotation}deg)`;
+        }
+
         async function mergePDFs() {
             if (pages.length < 1) {
                 alert("No pages selected.");
@@ -90,10 +106,14 @@
             }
 
             const pdfDoc = await PDFLib.PDFDocument.create();
-            for (const page of pages) {
-                const arrayBuffer = await page.file.arrayBuffer();
+
+            for (let i = 0; i < pages.length; i++) {
+                const pageData = pages[i];
+                const arrayBuffer = await pageData.file.arrayBuffer();
                 const loadedPdf = await PDFLib.PDFDocument.load(arrayBuffer);
-                const copiedPage = await pdfDoc.copyPages(loadedPdf, [page.pageIndex]);
+                const copiedPage = await pdfDoc.copyPages(loadedPdf, [pageData.pageIndex]);
+
+                copiedPage[0].setRotation(PDFLib.degrees(pageData.rotation));
                 pdfDoc.addPage(copiedPage[0]);
             }
 
@@ -107,6 +127,7 @@
             downloadLink.textContent = 'Download Merged PDF';
         }
     </script>
+
 
 </body>
 </html>
