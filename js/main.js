@@ -17,41 +17,10 @@ document.getElementById('pdfFiles').addEventListener('change', async function (e
             const imgSrc = canvas.toDataURL();
             const pageData = { file, pageIndex: i, imgSrc, rotation: 0 };
             pages.push(pageData);
-
-            const pageDiv = document.createElement("div");
-            pageDiv.classList.add("pdfPage");
-            pageDiv.dataset.index = pages.length - 1;
-
-            const img = document.createElement("img");
-            img.src = imgSrc;
-            img.dataset.index = pages.length - 1;
-
-            const controls = document.createElement("div");
-            controls.classList.add("controls");
-
-            const rotateBtn = document.createElement("button");
-            rotateBtn.textContent = "↻";
-            rotateBtn.classList.add("btn", "rotate-btn");
-            rotateBtn.onclick = () => rotatePage(parseInt(pageDiv.dataset.index), img);
-
-            const removeBtn = document.createElement("button");
-            removeBtn.textContent = "❌";
-            removeBtn.classList.add("btn", "remove-btn");
-            removeBtn.onclick = () => {
-                pages.splice(parseInt(pageDiv.dataset.index), 1);
-                pageDiv.remove();
-                renderPages();
-            };
-
-            controls.appendChild(rotateBtn);
-            controls.appendChild(removeBtn);
-            pageDiv.appendChild(img);
-            pageDiv.appendChild(controls);
-            document.getElementById("pageContainer").appendChild(pageDiv);
         }
     }
-
     renderPages();
+    enableDragAndDrop();
 });
 
 function renderPages() {
@@ -64,7 +33,6 @@ function renderPages() {
 
         const img = document.createElement("img");
         img.src = page.imgSrc;
-        img.dataset.index = index;
         img.style.transform = `rotate(${page.rotation}deg)`;
 
         const controls = document.createElement("div");
@@ -88,6 +56,20 @@ function renderPages() {
         pageDiv.appendChild(img);
         pageDiv.appendChild(controls);
         container.appendChild(pageDiv);
+    });
+}
+
+function enableDragAndDrop() {
+    new Sortable(document.getElementById("pageContainer"), {
+        animation: 150,
+        onEnd: function () {
+            const reorderedPages = [];
+            document.querySelectorAll(".pdfPage").forEach((div) => {
+                reorderedPages.push(pages[parseInt(div.dataset.index)]);
+            });
+            pages = reorderedPages;
+            renderPages();
+        }
     });
 }
 
@@ -125,7 +107,6 @@ async function mergePDFs() {
     downloadLink.click();
 
     setTimeout(resetApp, 1000);
-
 }
 
 function resetApp() {
