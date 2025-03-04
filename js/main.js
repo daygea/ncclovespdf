@@ -83,13 +83,34 @@ function rotatePage(index, img) {
     img.style.transform = `rotate(${pages[index].rotation}deg)`;
 }
 
+// Function to show a full-screen loader
+function showFullScreenLoader() {
+    const loaderOverlay = document.createElement("div");
+    loaderOverlay.id = "loaderOverlay";
+    loaderOverlay.innerHTML = `
+        <div class="loader-container">
+            <div class="loader"></div>
+            <p>Please wait...</p>
+        </div>
+    `;
+    document.body.appendChild(loaderOverlay);
+}
+
+// Function to hide the full-screen loader
+function hideFullScreenLoader() {
+    const loaderOverlay = document.getElementById("loaderOverlay");
+    if (loaderOverlay) {
+        loaderOverlay.remove();
+    }
+}
+
 async function mergePDFs() {
     if (pages.length < 1) {
         alert("No pages selected.");
         return;
     }
 
-    showLoading(); // Show loading indicator
+    showFullScreenLoader(); // Show the full-screen loader
 
     const pdfDoc = await PDFLib.PDFDocument.create();
 
@@ -112,27 +133,26 @@ async function mergePDFs() {
     downloadLink.style.display = 'block';
     downloadLink.textContent = 'Download Merged PDF';
 
-    // Introduce a short delay before hiding the loading indicator and resetting the app
     setTimeout(() => {
-        hideLoading();
+        hideFullScreenLoader(); // Remove the loader
         downloadLink.click(); // Automatically trigger download
 
-        // Clear the screen and reset the app
-        setTimeout(resetApp, 2000); // Give time for the download before reset
-    }, 1000); // 1-second delay for visibility
+        setTimeout(resetApp, 2000); // Reset the app after a short delay
+    }, 1000);
 }
 
+// Full reset after merging
 function resetApp() {
     pages = [];
     document.getElementById("pageContainer").innerHTML = "";
     document.getElementById("pdfFiles").value = "";
     document.getElementById("downloadLink").style.display = "none";
 
-    // Reload the page for a fresh start
     setTimeout(() => {
         location.reload();
-    }, 500); // Small delay to ensure cleanup
+    }, 500);
 }
+
 
 
 function showLoading() {
