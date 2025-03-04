@@ -110,9 +110,11 @@ async function mergePDFs() {
         return;
     }
 
-    showFullScreenLoader(); // Show the full-screen loader
+    showFullScreenLoader(); // Show the loading screen
 
     const pdfDoc = await PDFLib.PDFDocument.create();
+    const watermarkText = "CONFIDENTIAL"; // Change this as needed
+    const font = await pdfDoc.embedFont(PDFLib.StandardFonts.HelveticaBold);
 
     for (let i = 0; i < pages.length; i++) {
         const pageData = pages[i];
@@ -120,8 +122,22 @@ async function mergePDFs() {
         const loadedPdf = await PDFLib.PDFDocument.load(arrayBuffer);
         const copiedPage = await pdfDoc.copyPages(loadedPdf, [pageData.pageIndex]);
 
-        copiedPage[0].setRotation(PDFLib.degrees((pageData.rotation || 0) % 360));
-        pdfDoc.addPage(copiedPage[0]);
+        const [page] = copiedPage;
+        page.setRotation(PDFLib.degrees((pageData.rotation || 0) % 360));
+        pdfDoc.addPage(page);
+
+        // Add watermark
+        const { width, height } = page.getSize();
+        const textSize = 50;
+        page.drawText(watermarkText, {
+            x: width / 4,
+            y: height / 2,
+            size: textSize,
+            font: font,
+            color: PDFLib.rgb(0.8, 0.1, 0.1), // Light red watermark
+            opacity: 0.3,
+            rotate: PDFLib.degrees(45), // Diagonal text
+        });
     }
 
     const mergedPdfBytes = await pdfDoc.save();
@@ -131,15 +147,15 @@ async function mergePDFs() {
     const downloadLink = document.getElementById('downloadLink');
     downloadLink.href = url;
     downloadLink.style.display = 'block';
-    downloadLink.textContent = 'Download Merged PDF';
+    downloadLink.textContent = 'Download Document';
 
     setTimeout(() => {
         hideFullScreenLoader(); // Remove the loader
         downloadLink.click(); // Automatically trigger download
-
-        setTimeout(resetApp, 2000); // Reset the app after a short delay
+        setTimeout(resetApp, 2000);
     }, 1000);
 }
+
 
 // Full reset after merging
 function resetApp() {
