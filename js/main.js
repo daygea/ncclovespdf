@@ -1,10 +1,12 @@
 let pages = [];
 
 document.getElementById('pdfFiles').addEventListener('change', async function (event) {
+    showLoading(); // Show loading indicator
+
     for (const file of event.target.files) {
         const arrayBuffer = await file.arrayBuffer();
         const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
-        
+
         for (let i = 0; i < pdf.numPages; i++) {
             const page = await pdf.getPage(i + 1);
             const viewport = page.getViewport({ scale: 0.5 });
@@ -19,9 +21,12 @@ document.getElementById('pdfFiles').addEventListener('change', async function (e
             pages.push(pageData);
         }
     }
+
+    hideLoading(); // Hide loading indicator after processing
     renderPages();
     enableDragAndDrop();
 });
+
 
 function renderPages() {
     const container = document.getElementById("pageContainer");
@@ -84,6 +89,8 @@ async function mergePDFs() {
         return;
     }
 
+    showLoading(); // Show loading indicator
+
     const pdfDoc = await PDFLib.PDFDocument.create();
 
     for (let i = 0; i < pages.length; i++) {
@@ -92,7 +99,7 @@ async function mergePDFs() {
         const loadedPdf = await PDFLib.PDFDocument.load(arrayBuffer);
         const copiedPage = await pdfDoc.copyPages(loadedPdf, [pageData.pageIndex]);
 
-        copiedPage[0].setRotation(PDFLib.degrees(pageData.rotation));
+        copiedPage[0].setRotation(PDFLib.degrees((pageData.rotation || 0) % 360));
         pdfDoc.addPage(copiedPage[0]);
     }
 
@@ -104,9 +111,15 @@ async function mergePDFs() {
     downloadLink.href = url;
     downloadLink.style.display = 'block';
     downloadLink.textContent = 'Download Merged PDF';
-    downloadLink.click();
 
-    setTimeout(resetApp, 1000);
+    // Introduce a short delay before hiding the loading indicator and resetting the app
+    setTimeout(() => {
+        hideLoading();
+        downloadLink.click(); // Automatically trigger download
+
+        // Clear the screen and reset the app
+        setTimeout(resetApp, 2000); // Give time for the download before reset
+    }, 1000); // 1-second delay for visibility
 }
 
 function resetApp() {
@@ -114,5 +127,18 @@ function resetApp() {
     document.getElementById("pageContainer").innerHTML = "";
     document.getElementById("pdfFiles").value = "";
     document.getElementById("downloadLink").style.display = "none";
-    location.reload();
+
+    // Reload the page for a fresh start
+    setTimeout(() => {
+        location.reload();
+    }, 500); // Small delay to ensure cleanup
+}
+
+
+function showLoading() {
+    document.getElementById("loadingIndicator").style.display = "block";
+}
+
+function hideLoading() {
+    document.getElementById("loadingIndicator").style.display = "none";
 }
