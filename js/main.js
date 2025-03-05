@@ -138,6 +138,19 @@ async function mergePDFs() {
             opacity: 0.3,
             rotate: PDFLib.degrees(45), // Diagonal text
         });
+
+        // const watermarkImageBytes = await fetch("watermark.png").then(res => res.arrayBuffer());
+        // const watermarkImage = await pdfDoc.embedPng(watermarkImageBytes);
+
+        // page.drawImage(watermarkImage, {
+        //     x: width / 2 - 100,
+        //     y: height / 2 - 50,
+        //     width: 200,
+        //     height: 100,
+        //     opacity: 0.2, // Light transparency
+        // });
+
+        
     }
 
     const mergedPdfBytes = await pdfDoc.save();
