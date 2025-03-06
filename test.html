@@ -1,0 +1,63 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>PDF to Word Converter</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/2.16.105/pdf.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/docx/7.1.0/docx.min.js"></script>
+</head>
+<body>
+    <h2>PDF to Word Converter (Client-Side)</h2>
+    <input type="file" id="pdfInput" accept="application/pdf">
+    <button onclick="convertPdfToWord()">Convert to Word</button>
+
+    <script>
+        async function convertPdfToWord() {
+            const fileInput = document.getElementById("pdfInput");
+            if (!fileInput.files.length) {
+                alert("Please select a PDF file first.");
+                return;
+            }
+
+            const pdfFile = fileInput.files[0];
+            const reader = new FileReader();
+
+            reader.onload = async function () {
+                const typedArray = new Uint8Array(reader.result);
+                const pdf = await pdfjsLib.getDocument(typedArray).promise;
+                let extractedText = "";
+
+                for (let i = 1; i <= pdf.numPages; i++) {
+                    const page = await pdf.getPage(i);
+                    const textContent = await page.getTextContent();
+                    extractedText += textContent.items.map(item => item.str).join(" ") + "\n\n";
+                }
+
+                generateWordFile(extractedText);
+            };
+
+            reader.readAsArrayBuffer(pdfFile);
+        }
+
+        function generateWordFile(text) {
+            const { Document, Packer, Paragraph } = docx;
+            const doc = new Document({
+                sections: [
+                    {
+                        properties: {},
+                        children: text.split("\n").map(line => new Paragraph(line))
+                    }
+                ]
+            });
+
+            Packer.toBlob(doc).then(blob => {
+                const link = document.createElement("a");
+                link.href = URL.createObjectURL(blob);
+                link.download = "converted.docx";
+                link.click();
+            });
+        }
+    </script>
+</body>
+</html>
