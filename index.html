@@ -1,75 +1,77 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>PDF Organizer & Merger</title>
-    <script src="https://unpkg.com/pdf-lib@1.17.1"></script>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/2.16.105/pdf.min.js"></script>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/Sortable/1.14.0/Sortable.min.js"></script>
-   <script src="https://cdn.jsdelivr.net/npm/docx@7.7.0/build/index.umd.min.js"></script>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>ncclovespdf — Every PDF tool, 100% in your browser</title>
+  <meta name="description" content="Merge, split, rotate, compress, watermark and convert PDFs. Free, fast, and private — your documents never leave your device.">
+  <link rel="icon" href="img/logo.png">
+  <link rel="stylesheet" href="css/styles.css">
 
-    <style>
-        body { font-family: Arial, sans-serif; text-align: center; }
-        #pdfFiles { margin: 20px; }
-        #pageContainer { display: flex; flex-wrap: wrap; justify-content: center; gap: 10px; }
-        .pdfPage { position: relative; border: 1px solid #ccc; padding: 5px; cursor: grab; }
-        .pdfPage img { width: 100px; height: auto; display: block; transform-origin: center; transition: transform 0.2s; }
-        .controls { display: flex; justify-content: space-between; margin-top: 5px; }
-        .btn { background: #007bff; color: white; border: none; padding: 5px; cursor: pointer; margin: 2px; }
-        .remove-btn {}
-        .rotate-btn { background: orange; }
-
-            #loaderOverlay {
-            position: fixed;
-            top: 0;
-            left: 0;
-            width: 100%;
-            height: 100%;
-            background: rgba(0, 0, 0, 0.75); /* Dark semi-transparent overlay */
-            display: flex;
-            justify-content: center;
-            align-items: center;
-            z-index: 1000; /* Ensure it covers everything */
-        }
-
-        .loader-container {
-            text-align: center;
-            color: white;
-            font-size: 18px;
-        }
-
-        .loader {
-            border: 6px solid #f3f3f3;
-            border-top: 6px solid #3498db;
-            border-radius: 50%;
-            width: 50px;
-            height: 50px;
-            animation: spin 1s linear infinite;
-            margin-bottom: 10px;
-        }
-
-        @keyframes spin {
-            0% { transform: rotate(0deg); }
-            100% { transform: rotate(360deg); }
-        }
-
-    </style>
+  <!-- Local libraries: documents are processed entirely client-side -->
+  <script src="js/pdf-lib.min.js"></script>
+  <script src="js/pdf.min.js"></script>
+  <script src="js/Sortable.min.js"></script>
 </head>
 <body>
-<img src="img/logo.png" style="height: 100px; float left" /><br style="clear:both;" />
-    <h2>PDF Organizer & Merger</h2>
-    <input type="file" id="pdfFiles" multiple accept="application/pdf">
-    <button style="background-color: orange; padding:10px; cursor:pointer;" onclick="document.getElementById('pdfFiles').click()">+ Add More Files</button>
-    <div id="loadingIndicator" style="display: none; text-align: center;">
-        <img src="img/loading.gif" style="height:50px" alt="Loading..." />
+
+<header class="site">
+  <div class="wrap nav">
+    <a class="brand" href="#/"><img src="img/logo.png" alt="ncclovespdf logo">ncc<b>loves</b>pdf</a>
+    <a class="navlink" href="#/tool/merge">Merge</a>
+    <a class="navlink" href="#/tool/split">Split</a>
+    <a class="navlink" href="#/tool/compress">Compress</a>
+    <a class="navlink" href="#/tool/organize">Organize</a>
+    <span class="spacer"></span>
+    <button class="btn-ghost" onclick="location.hash='#/'">All tools</button>
+    <button class="btn-red" onclick="location.hash='#/tool/merge'">Start free</button>
+    <button class="menu-btn" onclick="location.hash='#/'">☰</button>
+  </div>
+</header>
+
+<main id="app"><!-- rendered by js/app.js --></main>
+
+<footer class="site">
+  <div class="wrap">
+    <div class="fgrid">
+      <div>
+        <div class="brand"><img src="img/logo.png" alt="" style="height:30px;width:30px">ncc<b>loves</b>pdf</div>
+        <p class="mini">Every tool you need to work with PDFs — running 100% in your browser. Built by Adedeji Kadri so official documents never have to be uploaded to a third party.</p>
+      </div>
+      <div>
+        <h5>Organize</h5>
+        <ul>
+          <li><a href="#/tool/merge">Merge PDF</a></li>
+          <li><a href="#/tool/split">Split PDF</a></li>
+          <li><a href="#/tool/organize">Organize pages</a></li>
+          <li><a href="#/tool/rotate">Rotate PDF</a></li>
+          <li><a href="#/tool/remove">Remove pages</a></li>
+        </ul>
+      </div>
+      <div>
+        <h5>Optimize &amp; Edit</h5>
+        <ul>
+          <li><a href="#/tool/compress">Compress PDF</a></li>
+          <li><a href="#/tool/pagenumbers">Page numbers</a></li>
+          <li><a href="#/tool/watermark">Watermark</a></li>
+        </ul>
+      </div>
+      <div>
+        <h5>Convert</h5>
+        <ul>
+          <li><a href="#/tool/pdf2jpg">PDF to JPG</a></li>
+          <li><a href="#/tool/jpg2pdf">JPG to PDF</a></li>
+        </ul>
+      </div>
     </div>
+    <div class="fbottom">
+      <span>© <span id="yr"></span> ncclovespdf · Built by Adedeji Kadri</span>
+      <span>🔒 Your files never leave this device</span>
+    </div>
+  </div>
+</footer>
 
-    <div id="pageContainer"></div>
-    <button style="background-color: cyan; padding: 10px; margin-top:10px; cursor:pointer;" onclick="mergePDFs()">Merge PDFs</button><br/><br/>
-    <a id="downloadLink" style="display: none; margin-bottom: 100px;" download="merged.pdf">Download Document</a>
-
-    <b style="color:red;">Documents are not stored due to its confidentiality</b>
-    <script type="text/javascript" src="js/main.js"></script>
+<script>document.getElementById('yr').textContent = new Date().getFullYear();</script>
+<script src="js/app.js"></script>
 </body>
 </html>
