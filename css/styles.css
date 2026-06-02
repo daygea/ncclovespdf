@@ -342,3 +342,46 @@ footer a:hover{color:#fff}
   .certno-prefix{font-size:12px;padding:9px 8px}
   .vc-t td:first-child{width:42%}
 }
+
+/* ============================================================
+   EDIT PDF
+   ============================================================ */
+.editor{margin-top:6px}
+.ed-toolbar{display:flex;align-items:center;gap:12px;flex-wrap:wrap;background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:10px 12px;box-shadow:var(--shadow-sm);position:sticky;top:74px;z-index:20}
+.ed-modes{display:flex;gap:4px;background:var(--bg-tint);padding:4px;border-radius:10px}
+.ed-mode{width:38px;height:34px;border:none;background:transparent;border-radius:8px;cursor:pointer;display:grid;place-items:center;color:var(--muted)}
+.ed-mode:hover{background:var(--surface);color:var(--ink)}
+.ed-mode.on{background:var(--red);color:#fff}
+.ed-color{display:inline-flex;align-items:center;gap:7px;font-size:13px;font-weight:600;color:var(--muted)}
+.ed-color input[type=color]{width:34px;height:30px;border:1px solid var(--line-strong);border-radius:8px;background:var(--bg);cursor:pointer;padding:2px}
+.ed-ctl{display:inline-flex;align-items:center;gap:7px;font-size:13px;font-weight:600;color:var(--muted)}
+.ed-ctl input[type=range]{width:90px}
+.ed-spacer{flex:1}
+.ed-pages{display:inline-flex;align-items:center;gap:8px;font-size:13.5px;font-weight:600}
+.ed-pages .iconbtn{width:30px;height:30px;font-size:16px}
+.ed-toolbar .btn-red{padding:9px 16px;display:inline-flex;align-items:center;gap:7px}
+
+.ed-stagewrap{margin-top:16px;background:var(--bg-tint);border:1px solid var(--line);border-radius:12px;padding:22px;display:flex;justify-content:center;overflow:auto;min-height:50vh}
+.ed-stage{position:relative;line-height:0}
+.ed-stage canvas{display:block;box-shadow:var(--shadow-md);border-radius:2px;background:#fff}
+.ed-overlay{position:absolute;top:0;left:0;touch-action:none}
+.ed-draw-layer{position:absolute;top:0;left:0;pointer-events:none;overflow:visible}
+.ed-draw-layer polyline.sel{filter:drop-shadow(0 0 0 var(--red))}
+.ed-ann{position:absolute;line-height:1.2}
+.ed-ann.sel{outline:1.5px dashed var(--red);outline-offset:2px}
+.ed-text{min-width:14px;min-height:1em;outline:none;white-space:pre-wrap;cursor:text;padding:0 1px;font-family:Helvetica,Arial,sans-serif}
+.ed-ann.image img{width:100%;height:100%;display:block;user-select:none;pointer-events:none}
+.ed-move{position:absolute;left:-11px;top:-11px;width:20px;height:20px;border-radius:6px;background:var(--red);color:#fff;font-size:11px;display:none;align-items:center;justify-content:center;cursor:move;line-height:1;box-shadow:var(--shadow-sm);touch-action:none}
+.ed-handle{position:absolute;right:-9px;bottom:-9px;width:18px;height:18px;border-radius:5px;background:var(--red);border:2px solid #fff;cursor:nwse-resize;display:none;touch-action:none}
+.ed-handle:after{content:"◢";position:absolute;right:-2px;bottom:-4px;font-size:10px;color:var(--red)}
+.ed-ann.sel .ed-move{display:flex}
+.ed-ann.sel .ed-handle{display:block}
+.ed-hint{text-align:center;margin-top:12px}
+
+@media (max-width:760px){
+  .ed-toolbar{top:64px;gap:8px;padding:9px}
+  .ed-spacer{display:none;flex-basis:100%}
+  .ed-color,.ed-ctl{font-size:12px}
+  .ed-stagewrap{padding:12px}
+  .ed-toolbar .btn-red{flex:1;justify-content:center}
+}
