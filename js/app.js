@@ -23,7 +23,6 @@ const I = {
   watermark:'<path d="M12 3s6 5.5 6 10a6 6 0 0 1-12 0c0-4.5 6-10 6-10Z"/>',
   pdf2jpg:'<rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="m21 15-5-5L5 21"/>',
   jpg2pdf:'<path d="M14 3v4a1 1 0 0 0 1 1h4"/><path d="M17 21H7a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h7l5 5v11a2 2 0 0 1-2 2Z"/><path d="M9 13h6M9 17h6"/>',
-  ocr:'<rect x="3" y="3" width="18" height="18" rx="2"/><path d="M7 8h2v8M15 8h2M15 12h2M15 16h2"/>',
   word:'<path d="M14 3v4a1 1 0 0 0 1 1h4"/><path d="M17 21H7a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h7l5 5v11a2 2 0 0 1-2 2Z"/><path d="m8 13 1.5 4 1.5-3 1.5 3 1.5-4"/>',
   upload:'<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 9l5-5 5 5M12 4v12"/>',
   back:'<path d="m15 18-6-6 6-6"/>',
@@ -64,9 +63,7 @@ const TOOLS = [
    desc:'Combine JPG or PNG images into a single PDF.'},
   /* honest roadmap items */
   {id:'word', cat:'blue', icon:'word', title:'PDF to Word', cats:['convert'], soon:true,
-   desc:'Reliable Word export needs a server step — on the roadmap.'},
-  {id:'ocr', cat:'purple', icon:'ocr', title:'OCR PDF', cats:['edit'], soon:true,
-   desc:'Make scanned PDFs searchable. Planned via on-device OCR.'},
+   desc:'Reliable Word export — on the roadmap.'},
 ];
 const CATS = [['all','All tools'],['create','Create'],['organize','Organize'],['optimize','Optimize'],['edit','Edit'],['convert','Convert']];
 const getTool = id => TOOLS.find(t=>t.id===id);
