@@ -1,5 +1,5 @@
 /* ============================================================
-   ncclovespdf — application core
+   welovepdf — application core
    Router + landing page + every PDF tool, 100% client-side.
    Libraries (pdf-lib, pdf.js, Sortable) are loaded locally;
    documents are NEVER uploaded anywhere.
@@ -123,7 +123,7 @@ function renderHome(){
   <section class="band">
     <div class="wrap">
       <h2>The PDF toolkit built for confidential documents</h2>
-      <p class="sub">Most online PDF tools upload your files to their servers. ncclovespdf does everything inside your own browser — so your official documents stay yours.</p>
+      <p class="sub">Most online PDF tools upload your files to their servers. welovepdf does everything inside your own browser — so your official documents stay yours.</p>
       <div class="three">
         <div class="feat"><div class="fic">${svg('shield',22)}</div><h4>Truly private</h4><p>Files are read and processed locally with WebAssembly. Nothing is sent to any server — close the tab and it’s gone.</p></div>
         <div class="feat"><div class="fic">${svg('bolt',22)}</div><h4>Instant &amp; free</h4><p>No upload, no queue, no account. Work runs at full local speed with no usage limits or hidden paywalls.</p></div>
@@ -796,7 +796,7 @@ function renderCertificate(t){
           <button class="btn-primary" id="dlPdf" style="flex:1">${svg('doc',18)} Download PDF</button>
           <button class="btn-primary" id="dlWord" style="flex:1;background:var(--blue);box-shadow:0 8px 22px rgba(44,123,229,.28)">${svg('word',18)} Download Word</button>
         </div>
-        <p class="hint" style="text-align:center;margin-top:10px">Both files match the approved NCC template and leave space at the top and bottom for your pre-printed letter-headed paper.</p>
+        <p class="hint" style="text-align:center;margin-top:10px">Both files match the approved template and leave space at the top and bottom for your pre-printed letter-headed paper.</p>
         <p class="hint" id="saveNote" style="text-align:center;margin-top:8px"></p>
       </div>
 
@@ -858,7 +858,7 @@ function renderCertificate(t){
 function certBodyHTML(d){
   const row=(l,v,b)=>`<div class="c-row"><span class="c-lbl">${l}:</span><span class="c-val${b?' b':''}">${v||'<span class="ph">—</span>'}</span></div>`;
   return `
-    <div class="c-letterhead">letterhead area (printed on NCC paper)</div>
+    <div class="c-letterhead">letterhead area (printed on paper)</div>
     <h1 class="c-title">Certificate of Final Completion</h1>
     <div class="c-rows">
       ${row('Issued By', ISSUER.name, true)}
@@ -923,7 +923,7 @@ function downloadNamed(blob,name){ const a=document.createElement('a'); a.href=U
 
 /* ============================================================
    PDF builder (pdf-lib, Times family). Designed to print on
-   NCC letter-headed paper: the logo/header and the footer block
+    letter-headed paper: the logo/header and the footer block
    are left blank (top & bottom margins) so the pre-printed
    letterhead shows through.
    ============================================================ */
@@ -1019,7 +1019,7 @@ function buildCertDoc(d){
 <head><meta charset="utf-8"><title>Certificate ${esc(d.certNo)}</title>
 <!--[if gte mso 9]><xml><w:WordDocument><w:View>Print</w:View></w:WordDocument></xml><![endif]-->
 <style>
-/* top & bottom margins leave room for the pre-printed NCC letterhead */
+/* top & bottom margins leave room for the pre-printed letterhead */
 @page Section1 { size:21cm 29.7cm; margin:3.6cm 2.3cm 3cm 2.3cm; }
 div.Section1 { page:Section1; }
 body{ font-family:'Times New Roman',serif; color:#1a1a22; font-size:12pt; }
