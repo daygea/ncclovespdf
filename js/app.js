@@ -39,8 +39,8 @@ const svg = (name, w=24) => `<svg viewBox="0 0 24 24" width="${w}" height="${w}"
 
 /* ---------- tool registry ---------- */
 const TOOLS = [
-  {id:'certificate', cat:'slate', icon:'certificate', title:'Job Completion Certificate', cats:['create'], form:true,
-   desc:'Fill a short form and issue an official Certificate of Final Completion as PDF and Word, with a unique searchable number.'},
+  {id:'word', cat:'blue', icon:'word', title:'PDF to Word', cats:['convert'],
+   desc:'Extract the text from a PDF into an editable Word document.'},
   {id:'merge', cat:'red', icon:'merge', title:'Merge PDF', cats:['organize'],
    desc:'Combine PDFs in the order you want into one document.'},
   {id:'split', cat:'red', icon:'split', title:'Split PDF', cats:['organize'],
@@ -61,9 +61,8 @@ const TOOLS = [
    desc:'Turn each PDF page into a high-quality JPG image.'},
   {id:'jpg2pdf', cat:'blue', icon:'jpg2pdf', title:'JPG to PDF', cats:['convert'], images:true,
    desc:'Combine JPG or PNG images into a single PDF.'},
-  /* honest roadmap items */
-  {id:'word', cat:'blue', icon:'word', title:'PDF to Word', cats:['convert'], soon:true,
-   desc:'Reliable Word export — on the roadmap.'},
+   {id:'certificate', cat:'slate', icon:'certificate', title:'Job Completion Certificate', cats:['create'], form:true,
+ desc:'Fill a short form and issue an official Certificate of Final Completion as PDF and Word, with a unique searchable number.'},
 ];
 const CATS = [['all','All tools'],['create','Create'],['organize','Organize'],['optimize','Optimize'],['edit','Edit'],['convert','Convert']];
 const getTool = id => TOOLS.find(t=>t.id===id);
@@ -545,6 +544,34 @@ function buildOptions(t){
         finish([await pdfBlob(out,'images.pdf')],`Combined ${S.images.length} image(s) into a PDF.`);
       });
       break;
+
+    /* ---- PDF TO WORD ---- */
+    case 'word':
+      t.features={reorder:true,rotate:false,remove:true,select:false};
+      o.innerHTML=`<h3>PDF to Word</h3>
+        <p class="hint">Pulls the text out of your PDF into an editable Word document. Works best on text-based PDFs (reports, letters, contracts). Scanned or image-only PDFs have no text layer to read — those need OCR.</p>
+        <div class="field"><label><input type="checkbox" id="wHead" checked> Detect headings (larger text becomes bold)</label></div>
+        <div class="field"><label><input type="checkbox" id="wBreak" checked> Keep a page break between PDF pages</label></div>
+        ${proc('Convert to Word')}`;
+      go(async()=>{
+        const detectHead=document.getElementById('wHead').checked;
+        const pageBreak=document.getElementById('wBreak').checked;
+        const model=[]; let totalChars=0;
+        for(const p of S.pages){
+          const pdf=await getDoc(p.file);
+          const page=await pdf.getPage(p.pageIndex+1);
+          const paras=await extractParagraphs(page, detectHead);
+          paras.forEach(x=>totalChars+=x.text.length);
+          model.push(paras);
+        }
+        if(totalChars < 5){
+          alert('No selectable text was found in this PDF.\n\nIt looks like a scanned or image-only document, so there is no text layer to convert. Turning that into Word needs OCR, which isn’t available yet.');
+          return;
+        }
+        const blob=buildWordDoc(model,{pageBreak});
+        finish([blob], `Extracted text from ${S.pages.length} page(s) into an editable Word document.`);
+      });
+      break;
   }
 }
 
@@ -591,6 +618,112 @@ async function rasterize(pageObj, scale, quality){
   const ctx=canvas.getContext('2d'); ctx.fillStyle='#fff'; ctx.fillRect(0,0,canvas.width,canvas.height);
   await page.render({canvasContext:ctx,viewport:vp}).promise;
   return {dataUrl:canvas.toDataURL('image/jpeg',quality), w:vp.width, h:vp.height};
+}
+
+/* ---------- PDF → Word: text extraction & rebuild ---------- */
+/* Reconstruct paragraphs from a PDF page's text layer using pdf.js.
+   Groups text items into lines by vertical position, then lines into
+   paragraphs by the vertical gap between them; optionally flags larger
+   text as headings. Returns [{text, heading}]. */
+async function extractParagraphs(page, detectHead){
+  const vp=page.getViewport({scale:1});
+  const tc=await page.getTextContent();
+  const items=[];
+  for(const it of tc.items){
+    if(typeof it.str!=='string' || it.str==='') continue;
+    const m=pdfjsLib.Util.transform(vp.transform, it.transform);
+    const size=Math.hypot(m[2],m[3]) || 10;
+    items.push({x:m[4], y:m[5], size, str:it.str, width:(it.width||0)});
+  }
+  return reconstructParagraphs(items, detectHead);
+}
+
+/* Pure reconstruction: items [{x,y,size,str,width}] -> [{text,heading}].
+   y is top-down (after the viewport transform). Kept separate from the
+   pdf.js call so the grouping logic can be tested in isolation. */
+function reconstructParagraphs(items, detectHead){
+  if(!items || !items.length) return [];
+
+  // group into lines by vertical position
+  items=items.slice().sort((a,b)=> a.y-b.y || a.x-b.x);
+  const lines=[]; let cur=null;
+  for(const it of items){
+    if(cur && Math.abs(it.y-cur.y) <= Math.max(cur.size,it.size)*0.6){ cur.items.push(it); }
+    else { cur={y:it.y, size:it.size, items:[it]}; lines.push(cur); }
+  }
+
+  // build text + dominant size for each line
+  const built=[];
+  for(const ln of lines){
+    ln.items.sort((a,b)=>a.x-b.x);
+    let text='', prevRight=null, maxSize=0;
+    for(const it of ln.items){
+      maxSize=Math.max(maxSize, it.size);
+      if(prevRight!==null){
+        const gap=it.x-prevRight;
+        if(gap > it.size*0.3 && !/\s$/.test(text) && !/^\s/.test(it.str)) text+=' ';
+      }
+      text+=it.str; prevRight=it.x+it.width;
+    }
+    text=text.replace(/\s+/g,' ').trim();
+    if(text) built.push({y:ln.y, size:maxSize, text});
+  }
+  if(!built.length) return [];
+
+  // median body size for heading detection
+  const sizes=built.map(b=>b.size).slice().sort((a,b)=>a-b);
+  const median=sizes[Math.floor(sizes.length/2)] || 10;
+
+  // group lines into paragraphs by vertical gaps
+  const paras=[]; let p=null, prevY=null, prevSize=median, prevWasHeading=false;
+  for(const ln of built){
+    const heading = detectHead && ln.size >= median*1.35 && ln.text.length < 120;
+    const gap = prevY===null ? 0 : (ln.y - prevY);
+    if(heading){
+      paras.push({text:ln.text, heading:true}); p=null; prevWasHeading=true;
+    } else {
+      const startNew = p===null || prevWasHeading || gap > prevSize*1.9;
+      if(startNew){ p={text:ln.text, heading:false}; paras.push(p); }
+      else { p.text += ' ' + ln.text; }
+      prevWasHeading=false;
+    }
+    prevY=ln.y; prevSize=ln.size;
+  }
+  return paras;
+}
+
+/* Build an editable Word (.doc) file from the extracted model.
+   HTML-based Word document — opens in MS Word / Google Docs and can be
+   re-saved as .docx. No external libraries, fully offline. */
+function buildWordDoc(model, opts){
+  const esc=s=>String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+  const parts=[];
+  model.forEach((paras,pi)=>{
+    const breakFirst = pi>0 && opts.pageBreak;
+    if(!paras.length){ parts.push('<p'+(breakFirst?' class="pb"':'')+'>&nbsp;</p>'); return; }
+    paras.forEach((p,idx)=>{
+      const cls=[]; if(p.heading) cls.push('h'); if(breakFirst && idx===0) cls.push('pb');
+      parts.push(`<p${cls.length?' class="'+cls.join(' ')+'"':''}>${esc(p.text)}</p>`);
+    });
+  });
+  const html=`<!DOCTYPE html>
+<html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:w="urn:schemas-microsoft-com:office:word" xmlns="http://www.w3.org/TR/REC-html40">
+<head><meta charset="utf-8"><title>Converted document</title>
+<!--[if gte mso 9]><xml><w:WordDocument><w:View>Print</w:View></w:WordDocument></xml><![endif]-->
+<style>
+@page Section1 { size:21cm 29.7cm; margin:2.2cm; }
+div.Section1 { page:Section1; }
+body{ font-family:'Calibri','Segoe UI',Arial,sans-serif; font-size:11pt; color:#1a1a1a; line-height:1.4; }
+p{ margin:0 0 8pt; }
+p.h{ font-size:14pt; font-weight:bold; margin:14pt 0 6pt; }
+p.pb{ page-break-before:always; margin:0; }
+</style></head>
+<body><div class="Section1">
+${parts.join('\n')}
+</div></body></html>`;
+  const blob=new Blob(['\ufeff'+html],{type:'application/msword'});
+  blob.dlName='converted.doc'; blob.sizeLabel=fmtSize(blob.size);
+  return blob;
 }
 
 /* ---------- result UI ---------- */
