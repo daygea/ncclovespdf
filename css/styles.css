@@ -367,7 +367,7 @@ footer a:hover{color:#fff}
 .ed-overlay{position:absolute;top:0;left:0;touch-action:none}
 .ed-draw-layer{position:absolute;top:0;left:0;pointer-events:none;overflow:visible}
 .ed-draw-layer polyline.sel{filter:drop-shadow(0 0 0 var(--red))}
-.ed-ann{position:absolute;line-height:1.2}
+.ed-ann{position:absolute;line-height:1.2;touch-action:none}
 .ed-ann.sel{outline:1.5px dashed var(--red);outline-offset:2px}
 .ed-text{min-width:14px;min-height:1em;outline:none;white-space:pre-wrap;cursor:text;padding:0 1px;font-family:Helvetica,Arial,sans-serif}
 .ed-ann.image img{width:100%;height:100%;display:block;user-select:none;pointer-events:none}

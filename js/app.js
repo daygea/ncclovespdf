@@ -1374,7 +1374,15 @@ function gotoPage(d){
 
 function edList(){ return ED.ann[ED.pageIndex] || (ED.ann[ED.pageIndex]=[]); }
 function edSelected(){ return edList().find(a=>a.id===ED.selectedId)||null; }
-function selectAnn(id){ ED.selectedId=id; edRenderOverlay(); syncControls(); }
+function selectAnn(id){
+  ED.selectedId=id;
+  const ov=document.getElementById('edOverlay');
+  if(ov){
+    ov.querySelectorAll('.ed-ann').forEach(el=>el.classList.toggle('sel', +el.dataset.id===id));
+    ov.querySelectorAll('.ed-draw-layer polyline').forEach(pl=>pl.classList.toggle('sel', +pl.getAttribute('data-id')===id));
+  }
+  syncControls();
+}
 function syncControls(){
   const a=edSelected();
   if(a && a.color){ const c=document.getElementById('edColor'); if(c) c.value=a.color; }
@@ -1431,6 +1439,7 @@ function edRenderOverlay(){
   edList().forEach(a=>{
     if(a.type==='draw'){
       const pl=document.createElementNS(NS,'polyline');
+      pl.setAttribute('data-id', a.id);
       pl.setAttribute('points', a.points.map(p=>`${(p[0]*W).toFixed(1)},${(p[1]*H).toFixed(1)}`).join(' '));
       pl.setAttribute('fill','none'); pl.setAttribute('stroke',a.color);
       pl.setAttribute('stroke-width', Math.max(1,a.sizeRatio*H)); pl.setAttribute('stroke-linecap','round'); pl.setAttribute('stroke-linejoin','round');
@@ -1455,7 +1464,8 @@ function edRenderOverlay(){
       const img=document.createElement('img'); img.src=a.dataUrl; img.draggable=false; el.appendChild(img);
       const rz=document.createElement('span'); rz.className='ed-handle'; rz.title='Resize';
       rz.addEventListener('pointerdown',ev=>startResize(ev,a,el)); el.appendChild(rz);
-      el.addEventListener('pointerdown',ev=>{ if(ED.mode==='select' && !ev.target.classList.contains('ed-handle')) selectAnn(a.id); });
+      // images can be dragged from anywhere on the body
+      el.addEventListener('pointerdown',ev=>{ if(ED.mode==='select' && !ev.target.classList.contains('ed-handle') && !ev.target.classList.contains('ed-move')) startDrag(ev,a,el); });
     }
     const mv=document.createElement('span'); mv.className='ed-move'; mv.title='Move'; mv.textContent='▦';
     mv.addEventListener('pointerdown',ev=>startDrag(ev,a,el));
@@ -1494,11 +1504,22 @@ function startResize(e,a,el){
 /* freehand stroke */
 function startStroke(e){
   const ov=document.getElementById('edOverlay'); const r=ov.getBoundingClientRect();
-  const a={id:++ED.uid, type:'draw', color:ED.color, sizeRatio:ED.penRatio, points:[[ (e.clientX-r.left)/r.width, (e.clientY-r.top)/r.height ]]};
+  const W=r.width, H=r.height;
+  const a={id:++ED.uid, type:'draw', color:ED.color, sizeRatio:ED.penRatio, points:[[ (e.clientX-r.left)/W, (e.clientY-r.top)/H ]]};
   edList().push(a);
-  const move=ev=>{ a.points.push([ (ev.clientX-r.left)/r.width, (ev.clientY-r.top)/r.height ]); edRenderOverlay(); };
+  // live-update a single polyline rather than rebuilding the whole overlay each move
+  const NS='http://www.w3.org/2000/svg';
+  let svgEl=ov.querySelector('.ed-draw-layer');
+  if(!svgEl){ svgEl=document.createElementNS(NS,'svg'); svgEl.setAttribute('class','ed-draw-layer'); svgEl.setAttribute('width',W); svgEl.setAttribute('height',H); ov.insertBefore(svgEl, ov.firstChild); }
+  const pl=document.createElementNS(NS,'polyline');
+  pl.setAttribute('data-id',a.id); pl.setAttribute('fill','none'); pl.setAttribute('stroke',a.color);
+  pl.setAttribute('stroke-width', Math.max(1,a.sizeRatio*H)); pl.setAttribute('stroke-linecap','round'); pl.setAttribute('stroke-linejoin','round');
+  svgEl.appendChild(pl);
+  const paint=()=>pl.setAttribute('points', a.points.map(p=>`${(p[0]*W).toFixed(1)},${(p[1]*H).toFixed(1)}`).join(' '));
+  paint();
+  const move=ev=>{ a.points.push([ (ev.clientX-r.left)/W, (ev.clientY-r.top)/H ]); paint(); };
   const up=()=>{ window.removeEventListener('pointermove',move); window.removeEventListener('pointerup',up);
-    if(a.points.length<2) edList().pop(); edRenderOverlay(); };
+    if(a.points.length<2){ edList().pop(); pl.remove(); } };
   window.addEventListener('pointermove',move); window.addEventListener('pointerup',up);
 }
 
