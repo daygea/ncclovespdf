@@ -23,10 +23,21 @@
     <a class="navlink" href="#/tool/split">Split</a>
     <a class="navlink" href="#/tool/compress">Compress</a>
     <span class="spacer"></span>
-    <button class="btn-ghost" onclick="location.hash='#/'">All tools</button>
-    <button class="btn-red" onclick="location.hash='#/tool/merge'">Start free</button>
-    <button class="menu-btn" onclick="location.hash='#/'">☰</button>
+    <button class="btn-ghost hide-sm" onclick="location.hash='#/'">All tools</button>
+    <button class="btn-red hide-sm" onclick="location.hash='#/tool/merge'">Start free</button>
+    <button class="menu-btn" id="menuBtn" aria-label="Menu" aria-expanded="false">☰</button>
   </div>
+  <nav class="mobile-menu" id="mobileMenu">
+    <a href="#/">All tools</a>
+    <a href="#/tool/merge">Merge PDF</a>
+    <a href="#/tool/split">Split PDF</a>
+    <a href="#/tool/compress">Compress PDF</a>
+    <a href="#/tool/organize">Organize PDF</a>
+    <a href="#/tool/word">PDF to Word</a>
+    <a href="#/tool/jpg2pdf">JPG to PDF</a>
+    <a href="#/tool/certificate">Job Completion Certificate</a>
+    <a class="mm-cta" href="#/tool/merge">Start free</a>
+  </nav>
 </header>
 
 <main id="app"><!-- rendered by js/app.js --></main>
@@ -72,7 +83,17 @@
   </div>
 </footer>
 
-<script>document.getElementById('yr').textContent = new Date().getFullYear();</script>
+<script>
+document.getElementById('yr').textContent = new Date().getFullYear();
+(function(){
+  var btn=document.getElementById('menuBtn'), menu=document.getElementById('mobileMenu');
+  function close(){ menu.classList.remove('open'); btn.setAttribute('aria-expanded','false'); btn.textContent='☰'; }
+  function toggle(){ var open=menu.classList.toggle('open'); btn.setAttribute('aria-expanded',open?'true':'false'); btn.textContent=open?'✕':'☰'; }
+  btn.addEventListener('click',toggle);
+  menu.addEventListener('click',function(e){ if(e.target.tagName==='A') close(); });
+  window.addEventListener('hashchange',close);
+})();
+</script>
 <script src="js/app.js"></script>
 </body>
 </html>
