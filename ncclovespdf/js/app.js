@@ -5,7 +5,6 @@
    documents are NEVER uploaded anywhere.
    ============================================================ */
 
-
 /* pdf.js worker (worker file only — your documents stay on-device) */
 if (window.pdfjsLib) {
   pdfjsLib.GlobalWorkerOptions.workerSrc =
@@ -803,7 +802,7 @@ const REG_KEY='ncc_cert_registry';
    amount, dates) — never the documents themselves.
    ============================================================ */
 const REGISTRY = {
-  url: 'https://script.google.com/macros/s/AKfycbwQ05wjR_ZZ14SLwJY1_va7SVGhJOtC2vgg0nUkluerDS_LKueh1qxT7_Y5qsZk0LEkfA/exec'   // e.g. 'https://script.google.com/macros/s/XXXXXXXX/exec'
+  url: ''   // e.g. 'https://script.google.com/macros/s/XXXXXXXX/exec'
 };
 const registryEnabled = () => !!(REGISTRY.url && /^https?:\/\//.test(REGISTRY.url));
 

@@ -27,17 +27,35 @@ App created by **Adedeji Kadri**.
 
 On the roadmap (need more than the browser alone does well): PDF→Word, OCR.
 
-## About the certificate number
-Each certificate gets a unique code (e.g. `NCC/PROC/CERT/ 29022C`). Issued
-certificates are saved to this browser's local storage so the number can be
-**verified later** under the "Verify a number" tab — fully offline, no server.
+## About the certificate number & verification
+Each certificate gets a unique code (e.g. `NCC/PROC/CERT/ 29022C`) and a **QR
+code** that links to the in-app verification page. Anyone can confirm a
+certificate is genuine by scanning the QR, or by typing the code under the
+"Verify a number" tab.
 
-Because storage is per-browser, uniqueness and lookup are guaranteed *on that
-device*. For a registry shared across the whole organisation (so any officer can
-verify any certificate, and numbers can never collide between machines), point
-the `saveRegistry` / `loadRegistry` functions in `js/app.js` at a small backend
-— a free Google Apps Script + Sheet, Supabase, or Firebase all work and keep the
-rest of the app unchanged.
+There are two modes:
+
+**Local only (default).** With no backend configured, issued certificates are
+saved to the browser's local storage. Uniqueness and verification are guaranteed
+*on that device* — good for a single workstation, fully offline, no server.
+
+**Shared registry (recommended for org-wide use).** Set `REGISTRY.url` near the
+top of `js/app.js` to a Google Apps Script Web App URL and every issued
+certificate is written to a shared Google Sheet. Numbers can then never collide
+between machines, and any officer (or contractor) can verify any certificate
+from any device via the QR or the code. The backend stores **only certificate
+metadata** — number, contractor, amount, dates — never the documents, so the
+"files never leave your device" promise is unaffected.
+
+Set up the shared registry with the ready-made script in `server/Code.gs`
+(step-by-step instructions are in the file's header — about 5 minutes). If the
+backend is ever unreachable, issuing falls back to local storage automatically
+and tells you so.
+
+> The QR is drawn locally by a small library (`qrcode-generator`) loaded from a
+> CDN; it only encodes the verification link, and no data is sent anywhere. If
+> that script is blocked/offline, the certificate still issues fine — just
+> without the QR image — and verification by typed code still works.
 
 ## Run it
 It's a static site — no build step. Open `index.html`, or host it free on
