@@ -483,7 +483,7 @@ function buildOptions(t){
         <div class="field"><label>Size</label><div class="range-row"><input type="range" id="sz" min="20" max="120" value="55"><b id="szv">55</b></div></div>
         <div class="field"><label>Angle</label>
           <div class="seg" id="ang"><button class="on" data-a="45">Diagonal</button><button data-a="0">Flat</button></div></div>
-        <div class="field"><label>Colour</label><input type="color" id="col" value="#e8312a" style="width:100%;height:40px;border:1px solid var(--line-strong);border-radius:9px;background:var(--bg)"></div>
+        <div class="field"><label>Colour</label><input type="color" id="col" value="#0b57b8" style="width:100%;height:40px;border:1px solid var(--line-strong);border-radius:9px;background:var(--bg)"></div>
         ${proc('Add watermark')}`;
       bindRange('op','opv','%'); bindRange('sz','szv','');
       let ang=45; document.querySelectorAll('#ang button').forEach(b=>b.onclick=()=>{document.querySelectorAll('#ang button').forEach(x=>x.classList.remove('on'));b.classList.add('on');ang=+b.dataset.a;});
@@ -1344,7 +1344,7 @@ let ED=null;
 
 function renderEdit(t){
   ED={ file:null, bytes:null, pdf:null, numPages:0, pageIndex:0, scale:1,
-       ann:{}, mode:'select', color:'#e8312a', fsRatio:0.028, penRatio:0.004, selectedId:null, uid:0 };
+       ann:{}, mode:'select', color:'#0b57b8', fsRatio:0.028, penRatio:0.004, selectedId:null, uid:0 };
 
   app().innerHTML=`
   <section class="tool"><div class="wrap">
@@ -1370,7 +1370,7 @@ function renderEdit(t){
           <button class="ed-mode" data-m="image" title="Add image">${svg('image',18)}</button>
           <button class="ed-mode" data-m="draw" title="Draw">${svg('pen',18)}</button>
         </div>
-        <label class="ed-color">Colour <input type="color" id="edColor" value="#e8312a"></label>
+        <label class="ed-color">Colour <input type="color" id="edColor" value="#0b57b8"></label>
         <span class="ed-ctl" id="edTextCtl" style="display:none">Size
           <button class="iconbtn" id="fsDown">−</button><button class="iconbtn" id="fsUp">+</button></span>
         <span class="ed-ctl" id="edPenCtl" style="display:none">Pen
@@ -1438,11 +1438,18 @@ async function edLoad(file){
 function setMode(m){
   ED.mode=m;
   document.querySelectorAll('#edModes .ed-mode').forEach(b=>b.classList.toggle('on', b.dataset.m===m));
-  document.getElementById('edTextCtl').style.display = m==='text' ? 'inline-flex':'none';
-  document.getElementById('edPenCtl').style.display = m==='draw' ? 'inline-flex':'none';
+  updateCtls();
   const ov=document.getElementById('edOverlay');
   if(ov) ov.style.cursor = (m==='text'?'text': m==='draw'?'crosshair': m==='image'?'copy':'default');
   if(m==='image'){ edPickImage(); setMode('select'); }
+}
+/* show the Text-size control whenever you're in Text mode OR a text item is selected;
+   show the Pen control in Draw mode */
+function updateCtls(){
+  const a=edSelected();
+  const showText = ED.mode==='text' || (a && a.type==='text');
+  const t=document.getElementById('edTextCtl'); if(t) t.style.display = showText ? 'inline-flex':'none';
+  const p=document.getElementById('edPenCtl'); if(p) p.style.display = ED.mode==='draw' ? 'inline-flex':'none';
 }
 
 async function edRenderPage(){
@@ -1488,12 +1495,23 @@ function selectAnn(id){
 function syncControls(){
   const a=edSelected();
   if(a && a.color){ const c=document.getElementById('edColor'); if(c) c.value=a.color; }
+  updateCtls();
 }
 function deleteSelected(){
   const l=edList(); const i=l.findIndex(a=>a.id===ED.selectedId);
-  if(i>=0){ l.splice(i,1); ED.selectedId=null; edRenderOverlay(); }
+  if(i>=0){ l.splice(i,1); ED.selectedId=null; edRenderOverlay(); updateCtls(); }
 }
-function edFontStep(f){ const a=edSelected(); if(a&&a.type==='text'){ a.fsRatio*=f; edRenderOverlay(); } else { ED.fsRatio*=f; } }
+function edFontStep(f){
+  const a=edSelected();
+  if(a && a.type==='text'){
+    a.fsRatio=Math.min(0.2, Math.max(0.008, a.fsRatio*f));
+    const ov=document.getElementById('edOverlay');
+    const tx=ov && ov.querySelector('.ed-ann[data-id="'+a.id+'"] .ed-text');
+    if(tx && ov) tx.style.fontSize=(a.fsRatio*ov.clientHeight)+'px';
+  } else {
+    ED.fsRatio=Math.min(0.2, Math.max(0.008, ED.fsRatio*f));
+  }
+}
 
 function edRel(e){
   const ov=document.getElementById('edOverlay'); const r=ov.getBoundingClientRect();
