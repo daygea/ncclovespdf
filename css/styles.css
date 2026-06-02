@@ -238,3 +238,57 @@ footer a:hover{color:#fff}
 @media (max-width:560px){
   .fgrid{grid-template-columns:1fr}
 }
+
+/* ============================================================
+   CERTIFICATE GENERATOR
+   ============================================================ */
+.cert-layout{display:grid;grid-template-columns:minmax(0,420px) 1fr;gap:26px;align-items:start}
+#certTabs button{padding:10px}
+.certno-row{display:flex;align-items:center;gap:8px}
+.certno-prefix{font-weight:700;font-size:13px;color:var(--slate);background:var(--slate-soft);padding:10px 11px;border-radius:9px;white-space:nowrap;display:flex;align-items:center}
+.certno-row input{flex:1}
+.certno-row input[readonly]{background:var(--bg-tint);font-weight:700;letter-spacing:.04em}
+
+.preview-wrap{position:sticky;top:84px}
+.preview-label{font-size:12px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:var(--muted);margin-bottom:10px;text-align:center}
+.cert-paper{
+  background:#fff;border:1px solid var(--line);border-radius:6px;box-shadow:var(--shadow-md);
+  padding:30px 40px 40px;font-family:'Times New Roman',Georgia,serif;color:#1a1a22;
+  aspect-ratio:1/1.414;overflow:auto;position:relative;
+}
+.cert-paper .c-letterhead{
+  border:1px dashed #c9cfd8;border-radius:5px;color:#aab1bc;font-family:var(--body);
+  font-size:10px;text-transform:uppercase;letter-spacing:.08em;text-align:center;
+  padding:14px 8px;margin-bottom:18px;background:repeating-linear-gradient(45deg,#fafbfc,#fafbfc 8px,#f4f6f8 8px,#f4f6f8 16px);
+}
+.cert-paper .c-title{font-size:23px;font-weight:700;margin:4px 0 22px;text-align:center}
+.cert-paper .c-rows{margin:0 0 8px}
+.cert-paper .c-row{display:grid;grid-template-columns:150px 1fr;gap:8px;font-size:12px;margin:6px 0;line-height:1.4}
+.cert-paper .c-lbl{color:#1a1a22}
+.cert-paper .c-val.b{font-weight:700}
+.cert-paper .ph{color:#b3b8c0}
+.cert-paper .c-certify{text-align:center;margin:22px 0;font-size:12px;line-height:1.75}
+.cert-paper .c-certify p{margin:0}
+.cert-paper .c-certify .b{font-weight:700}
+.cert-paper .c-sumline{display:flex;justify-content:center;gap:42px;align-items:baseline;margin:18px 0 4px;font-size:12.5px}
+.cert-paper .c-sumline b{font-size:13px}
+.cert-paper .c-words{text-align:center;font-weight:700;font-size:12px;margin:0 auto;max-width:84%;line-height:1.5}
+.cert-paper .c-sign{text-align:center;margin-top:60px}
+.cert-paper .c-sigline{width:210px;border-top:1px solid #1a1a22;margin:0 auto 6px}
+.cert-paper .c-role{font-size:12px;margin:0}
+.cert-paper .c-for{font-size:11px;margin:2px 0 0}
+
+.verify-card{border-radius:12px;padding:18px;margin-top:6px}
+.verify-card.ok{background:var(--green-soft);border:1px solid #b6e3d2}
+.verify-card.not{background:var(--bg-tint);border:1px solid var(--line-strong)}
+.verify-card.not b{display:block;margin-bottom:4px}
+.verify-card.not p{margin:0;font-size:13.5px;color:var(--muted)}
+.vc-h{display:flex;align-items:center;gap:8px;font-weight:700;color:var(--green);margin-bottom:12px}
+.vc-t{width:100%;border-collapse:collapse;font-size:13.5px}
+.vc-t td{padding:7px 4px;border-bottom:1px solid rgba(18,168,123,.18);vertical-align:top}
+.vc-t td:first-child{color:var(--muted);width:38%;font-weight:600}
+
+@media (max-width:880px){
+  .cert-layout{grid-template-columns:1fr}
+  .preview-wrap{position:static}
+}
