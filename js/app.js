@@ -7,6 +7,7 @@
 
 
 /* pdf.js worker (worker file only — your documents stay on-device) */
+GATE.passHash = '2fa9df2fe61de377c7396f534151d7b16e7e61f3b5398d04133e19a7d8333d49';
 if (window.pdfjsLib) {
   pdfjsLib.GlobalWorkerOptions.workerSrc =
     'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/2.16.105/pdf.worker.min.js';
