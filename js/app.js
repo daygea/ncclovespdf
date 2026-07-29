@@ -74,6 +74,9 @@ const I = {
   edit:'<path d="M12 20h9"/><path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z"/>',
   crop:'<path d="M6 2v14a2 2 0 0 0 2 2h14"/><path d="M18 22V8a2 2 0 0 0-2-2H2"/>',
   forms:'<rect x="4" y="3" width="16" height="18" rx="2"/><path d="M8 8h8M8 12h8M8 16h5"/>',
+  sign:'<path d="M3 19c2.2 0 3.2-6 5-6s1.6 5 3.4 5 2.2-9 4-9 1.8 4 3.6 4"/><path d="M3 21h18"/>',
+  scan:'<path d="M3 7V5a2 2 0 0 1 2-2h2M17 3h2a2 2 0 0 1 2 2v2M21 17v2a2 2 0 0 1-2 2h-2M7 21H5a2 2 0 0 1-2-2v-2"/><rect x="7" y="8" width="10" height="8" rx="1"/>',
+  ocr:'<rect x="3" y="3" width="18" height="18" rx="2"/><path d="M7 8v8M7 8h2M7 16h2M13 8h2M13 8v8M13 16h2M17 8v8"/>',
   cursor:'<path d="m4 3 6.5 16 2.3-6.7L19.5 10 4 3Z"/>',
   image:'<rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="m21 15-5-5L5 21"/>',
   pen:'<path d="M12 19l7-7 3 3-7 7-3-3z"/><path d="M18 13l-1.5-7.5L2 2l3.5 14.5L13 18l5-5z"/><path d="M2 2l7.5 7.5"/>'
@@ -106,6 +109,12 @@ const TOOLS = [
    desc:'Trim the page margins or crop to a selected area.'},
   {id:'forms', cat:'amber', icon:'forms', title:'Fill Forms', cats:['edit'],
    desc:'Fill in a PDF’s form fields, then optionally flatten them.'},
+  {id:'sign', cat:'purple', icon:'sign', title:'Sign PDF', cats:['edit'],
+   desc:'Draw, type or upload a signature and place it on your PDF.'},
+  {id:'scan', cat:'blue', icon:'scan', title:'Scan to PDF', cats:['convert'],
+   desc:'Use your camera to photograph documents and turn them into a PDF.'},
+  {id:'ocr', cat:'green', icon:'ocr', title:'OCR PDF', cats:['optimize'],
+   desc:'Read the text from scanned pages into editable text or Word.'},
   {id:'pdf2jpg', cat:'blue', icon:'pdf2jpg', title:'PDF to JPG', cats:['convert'],
    desc:'Turn each PDF page into a high-quality JPG image.'},
   {id:'jpg2pdf', cat:'blue', icon:'jpg2pdf', title:'JPG to PDF', cats:['convert'], images:true,
@@ -206,6 +215,9 @@ function renderTool(id){
   if(t.id==='editpdf'){ renderEdit(t); return; }
   if(t.id==='crop'){ renderCrop(t); return; }
   if(t.id==='forms'){ renderForms(t); return; }
+  if(t.id==='sign'){ renderSign(t); return; }
+  if(t.id==='scan'){ renderScan(t); return; }
+  if(t.id==='ocr'){ renderOcr(t); return; }
 
   const accept = t.images ? 'image/jpeg,image/png' : 'application/pdf';
   app().innerHTML = `
@@ -1997,5 +2009,453 @@ async function fmSave(){
     downloadNamed(new Blob([bytes],{type:'application/pdf'}),'filled.pdf');
     document.getElementById('fmNote').textContent='✓ Filled. Your PDF has been downloaded.';
   }catch(e){ console.error(e); alert('Could not fill the form: '+e.message); }
+  finally{ loader(false); }
+}
+
+/* ============================================================
+   SIGN PDF — capture a signature (draw / type / upload), then
+   place, move and resize it on the page(s). Flattened via pdf-lib.
+   ============================================================ */
+let SG=null;
+function renderSign(t){
+  SG={ bytes:null, pdf:null, numPages:0, pageIndex:0, scale:1, sig:null, placed:{}, selId:null, uid:0 };
+  app().innerHTML=`
+  <section class="tool"><div class="wrap">
+    <span class="back" onclick="location.hash='#/'">${svg('back',18)} All tools</span>
+    <div class="tool-head">
+      <span class="ic" style="background:var(--purple-soft);color:var(--purple)">${svg('sign',30)}</span>
+      <h1>${t.title}</h1><p>${t.desc}</p>
+    </div>
+    <div class="dropzone" id="drop">
+      <div class="upic">${svg('upload',30)}</div>
+      <div class="big">Drop a PDF here</div>
+      <div class="small">or click to browse — your file stays on your device</div>
+      <button class="btn-red" id="pick">Select PDF file</button>
+      <input type="file" id="file" accept="application/pdf" hidden>
+    </div>
+    <div id="editor" class="editor" style="display:none">
+      <div class="ed-toolbar">
+        <button class="tb" id="sgNew">✍ Signature</button>
+        <button class="tb" id="sgPlace" disabled>＋ Place on this page</button>
+        <button class="iconbtn warn" id="sgDel" title="Delete selected">✕</button>
+        <span class="ed-spacer"></span>
+        <span class="ed-pages"><button class="iconbtn" id="prevPg">‹</button><span id="pgInfo">1 / 1</span><button class="iconbtn" id="nextPg">›</button></span>
+        <button class="btn-red" id="sgSave">${svg('dl',16)} Sign &amp; download</button>
+      </div>
+      <div class="ed-stagewrap" id="edStageWrap"><div class="ed-stage" id="edStage">
+        <canvas id="edCanvas"></canvas>
+        <div id="sgOverlay" class="ed-overlay"></div>
+      </div></div>
+      <p class="hint ed-hint">Create a signature, then Place it on the page. Drag to move, corner to resize.</p>
+    </div>
+    <div id="sgModal" class="modal" style="display:none"><div class="modal-card">
+      <div class="seg" id="sgTabs" style="margin-bottom:14px">
+        <button class="on" data-s="draw">Draw</button><button data-s="type">Type</button><button data-s="upload">Upload</button>
+      </div>
+      <div id="sgDraw"><canvas id="sgPad" class="sig-pad" width="520" height="200"></canvas>
+        <p class="hint" style="margin:8px 0">Draw your signature above.</p></div>
+      <div id="sgType" style="display:none"><input type="text" id="sgName" placeholder="Type your name" style="width:100%">
+        <div class="sig-preview" id="sgTypePrev"></div></div>
+      <div id="sgUpload" style="display:none"><input type="file" id="sgImg" accept="image/png,image/jpeg">
+        <p class="hint" style="margin:8px 0">Best with a transparent PNG.</p><div class="sig-preview" id="sgUpPrev"></div></div>
+      <div class="row" style="gap:10px;margin-top:14px">
+        <button class="btn-ghost" id="sgClear" style="flex:1">Clear</button>
+        <button class="btn-ghost" id="sgCancel" style="flex:1">Cancel</button>
+        <button class="btn-primary" id="sgUse" style="flex:1.4">Use signature</button>
+      </div>
+    </div></div>
+  </div></section>`;
+  const drop=document.getElementById('drop'), input=document.getElementById('file');
+  document.getElementById('pick').onclick=()=>input.click();
+  drop.onclick=e=>{ if(['drop'].includes(e.target.id)||e.target.classList.contains('upic')||e.target.classList.contains('big')||e.target.classList.contains('small')) input.click(); };
+  ['dragover','dragenter'].forEach(ev=>drop.addEventListener(ev,e=>{e.preventDefault();drop.classList.add('drag');}));
+  ['dragleave','drop'].forEach(ev=>drop.addEventListener(ev,e=>{e.preventDefault();drop.classList.remove('drag');}));
+  drop.addEventListener('drop',e=>sgLoad(e.dataTransfer.files[0]));
+  input.addEventListener('change',e=>{ sgLoad(e.target.files[0]); input.value=''; });
+  document.getElementById('prevPg').onclick=()=>{ if(SG.pageIndex>0){SG.pageIndex--; sgRenderPage();} };
+  document.getElementById('nextPg').onclick=()=>{ if(SG.pageIndex<SG.numPages-1){SG.pageIndex++; sgRenderPage();} };
+  document.getElementById('sgNew').onclick=sgOpenModal;
+  document.getElementById('sgPlace').onclick=sgPlace;
+  document.getElementById('sgDel').onclick=sgDelete;
+  document.getElementById('sgSave').onclick=sgSave;
+  sgWireModal();
+  window.addEventListener('resize',()=>{ if(SG&&SG.pdf){ clearTimeout(SG._t); SG._t=setTimeout(sgRenderPage,180);} });
+}
+async function sgLoad(file){
+  if(!file||file.type!=='application/pdf'){ alert('Please choose a PDF file.'); return; }
+  loader(true,'Opening PDF…');
+  try{
+    SG.bytes=await file.arrayBuffer();
+    SG.pdf=await pdfjsLib.getDocument({data:SG.bytes.slice(0)}).promise;
+    SG.numPages=SG.pdf.numPages; SG.pageIndex=0;
+    document.getElementById('drop').style.display='none';
+    document.getElementById('editor').style.display='block';
+    await sgRenderPage();
+  }catch(e){ console.error(e); alert('Could not open this PDF: '+e.message); }
+  finally{ loader(false); }
+}
+async function sgRenderPage(){
+  const page=await SG.pdf.getPage(SG.pageIndex+1);
+  const wrap=document.getElementById('edStageWrap');
+  const avail=Math.min((wrap.clientWidth||900)-2, 900);
+  const base=page.getViewport({scale:1}); SG.scale=Math.max(0.2, avail/base.width);
+  const vp=page.getViewport({scale:SG.scale});
+  const canvas=document.getElementById('edCanvas'); const dpr=window.devicePixelRatio||1;
+  canvas.width=Math.floor(vp.width*dpr); canvas.height=Math.floor(vp.height*dpr);
+  canvas.style.width=vp.width+'px'; canvas.style.height=vp.height+'px';
+  const ctx=canvas.getContext('2d'); ctx.setTransform(dpr,0,0,dpr,0,0);
+  ctx.fillStyle='#fff'; ctx.fillRect(0,0,vp.width,vp.height);
+  await page.render({canvasContext:ctx,viewport:vp}).promise;
+  const ov=document.getElementById('sgOverlay'); ov.style.width=vp.width+'px'; ov.style.height=vp.height+'px';
+  document.getElementById('pgInfo').textContent=(SG.pageIndex+1)+' / '+SG.numPages;
+  document.getElementById('prevPg').disabled=SG.pageIndex===0;
+  document.getElementById('nextPg').disabled=SG.pageIndex>=SG.numPages-1;
+  sgRenderOverlay();
+}
+function sgList(){ return SG.placed[SG.pageIndex] || (SG.placed[SG.pageIndex]=[]); }
+function sgRenderOverlay(){
+  const ov=document.getElementById('sgOverlay'); if(!ov) return;
+  const W=ov.clientWidth, H=ov.clientHeight; ov.innerHTML='';
+  sgList().forEach(a=>{
+    const el=document.createElement('div'); el.className='ed-ann image'+(a.id===SG.selId?' sel':''); el.dataset.id=a.id;
+    el.style.left=(a.x*W)+'px'; el.style.top=(a.y*H)+'px'; el.style.width=(a.w*W)+'px'; el.style.height=(a.h*H)+'px';
+    const img=document.createElement('img'); img.src=SG.sig.dataUrl; img.draggable=false; el.appendChild(img);
+    const rz=document.createElement('span'); rz.className='ed-handle'; rz.addEventListener('pointerdown',ev=>sgResize(ev,a,el)); el.appendChild(rz);
+    el.addEventListener('pointerdown',ev=>{ if(!ev.target.classList.contains('ed-handle')) sgDrag(ev,a,el); });
+    ov.appendChild(el);
+  });
+}
+function sgSelect(id){ SG.selId=id; document.querySelectorAll('#sgOverlay .ed-ann').forEach(el=>el.classList.toggle('sel', +el.dataset.id===id)); }
+function sgDrag(e,a,el){
+  e.preventDefault(); sgSelect(a.id); const ov=document.getElementById('sgOverlay'); const r=ov.getBoundingClientRect();
+  const sx=e.clientX, sy=e.clientY, x0=a.x*r.width, y0=a.y*r.height;
+  const move=ev=>{ let nx=x0+(ev.clientX-sx), ny=y0+(ev.clientY-sy);
+    nx=Math.max(0,Math.min(nx,r.width-10)); ny=Math.max(0,Math.min(ny,r.height-10));
+    a.x=nx/r.width; a.y=ny/r.height; el.style.left=nx+'px'; el.style.top=ny+'px'; };
+  const up=()=>{ window.removeEventListener('pointermove',move); window.removeEventListener('pointerup',up); };
+  window.addEventListener('pointermove',move); window.addEventListener('pointerup',up);
+}
+function sgResize(e,a,el){
+  e.preventDefault(); e.stopPropagation(); sgSelect(a.id); const ov=document.getElementById('sgOverlay'); const r=ov.getBoundingClientRect();
+  const sx=e.clientX, w0=a.w*r.width, ar=a.ar||(w0/(a.h*r.height));
+  const move=ev=>{ let nw=Math.max(30, w0+(ev.clientX-sx)); let nh=nw/ar;
+    if(a.x*r.width+nw>r.width){ nw=r.width-a.x*r.width; nh=nw/ar; }
+    if(a.y*r.height+nh>r.height){ nh=r.height-a.y*r.height; nw=nh*ar; }
+    a.w=nw/r.width; a.h=nh/r.height; el.style.width=nw+'px'; el.style.height=nh+'px'; };
+  const up=()=>{ window.removeEventListener('pointermove',move); window.removeEventListener('pointerup',up); };
+  window.addEventListener('pointermove',move); window.addEventListener('pointerup',up);
+}
+function sgPlace(){
+  if(!SG.sig) return;
+  const ov=document.getElementById('sgOverlay'); const W=ov.clientWidth, H=ov.clientHeight;
+  const w=Math.min(W*0.34, 220), h=w/SG.sig.ar;
+  const a={id:++SG.uid, x:(W-w)/2/W, y:(H-h)/2/H, w:w/W, h:h/H, ar:SG.sig.ar};
+  sgList().push(a); SG.selId=a.id; sgRenderOverlay();
+}
+function sgDelete(){ const l=sgList(); const i=l.findIndex(a=>a.id===SG.selId); if(i>=0){ l.splice(i,1); SG.selId=null; sgRenderOverlay(); } }
+async function sgSave(){
+  const total=Object.values(SG.placed).reduce((n,l)=>n+(l?l.length:0),0);
+  if(!total){ alert('Create a signature and place it on the page first.'); return; }
+  loader(true,'Signing…');
+  try{
+    const out=await PDFLib.PDFDocument.load(SG.bytes);
+    const png=await out.embedPng(dataURLtoBytes(SG.sig.dataUrl));
+    const pages=out.getPages();
+    Object.keys(SG.placed).forEach(pi=>{
+      const list=SG.placed[pi]; if(!list||!list.length) return; const page=pages[+pi]; if(!page) return;
+      const {width:pw,height:ph}=page.getSize();
+      list.forEach(a=>{ const w=a.w*pw,h=a.h*ph,x=a.x*pw,y=ph-(a.y*ph)-h; page.drawImage(png,{x,y,width:w,height:h}); });
+    });
+    const bytes=await out.save();
+    downloadNamed(new Blob([bytes],{type:'application/pdf'}),'signed.pdf');
+    document.querySelector('#editor .ed-hint').textContent='✓ Signed. Your PDF has been downloaded.';
+  }catch(e){ console.error(e); alert('Could not sign: '+e.message); }
+  finally{ loader(false); }
+}
+/* ---- signature capture modal ---- */
+function sgOpenModal(){ document.getElementById('sgModal').style.display='flex'; sgPadReset(); }
+function sgCloseModal(){ document.getElementById('sgModal').style.display='none'; }
+let _sgPadDrawn=false;
+function sgWireModal(){
+  const pad=document.getElementById('sgPad'); const ctx=pad.getContext('2d');
+  ctx.lineWidth=2.6; ctx.lineCap='round'; ctx.lineJoin='round'; ctx.strokeStyle='#0b1030';
+  let drawing=false, lx=0, ly=0;
+  const pos=e=>{ const r=pad.getBoundingClientRect(); return { x:(e.clientX-r.left)*(pad.width/r.width), y:(e.clientY-r.top)*(pad.height/r.height) }; };
+  pad.addEventListener('pointerdown',e=>{ drawing=true; const p=pos(e); lx=p.x; ly=p.y; pad.setPointerCapture(e.pointerId); });
+  pad.addEventListener('pointermove',e=>{ if(!drawing) return; const p=pos(e); ctx.beginPath(); ctx.moveTo(lx,ly); ctx.lineTo(p.x,p.y); ctx.stroke(); lx=p.x; ly=p.y; _sgPadDrawn=true; });
+  pad.addEventListener('pointerup',()=>drawing=false); pad.addEventListener('pointerleave',()=>drawing=false);
+  document.querySelectorAll('#sgTabs button').forEach(b=>b.onclick=()=>{
+    document.querySelectorAll('#sgTabs button').forEach(x=>x.classList.remove('on')); b.classList.add('on');
+    const s=b.dataset.s;
+    document.getElementById('sgDraw').style.display=s==='draw'?'':'none';
+    document.getElementById('sgType').style.display=s==='type'?'':'none';
+    document.getElementById('sgUpload').style.display=s==='upload'?'':'none';
+  });
+  document.getElementById('sgName').addEventListener('input',e=>{
+    const prev=document.getElementById('sgTypePrev');
+    prev.innerHTML = e.target.value ? `<span style="font-family:'Segoe Script','Bradley Hand',cursive;font-size:40px">${esc(e.target.value)}</span>` : '';
+  });
+  document.getElementById('sgImg').addEventListener('change',e=>{
+    const f=e.target.files[0]; if(!f) return; const fr=new FileReader();
+    fr.onload=()=>{ document.getElementById('sgUpPrev').innerHTML=`<img src="${fr.result}" style="max-height:120px">`; SG._upload=fr.result; };
+    fr.readAsDataURL(f);
+  });
+  document.getElementById('sgClear').onclick=sgPadReset;
+  document.getElementById('sgCancel').onclick=sgCloseModal;
+  document.getElementById('sgUse').onclick=sgUse;
+}
+function sgPadReset(){ const pad=document.getElementById('sgPad'); if(pad){ const c=pad.getContext('2d'); c.clearRect(0,0,pad.width,pad.height); } _sgPadDrawn=false;
+  const n=document.getElementById('sgName'); if(n) n.value=''; const tp=document.getElementById('sgTypePrev'); if(tp) tp.innerHTML=''; SG._upload=null; }
+function trimTransparent(canvas){
+  const ctx=canvas.getContext('2d'); const {width:w,height:h}=canvas; const d=ctx.getImageData(0,0,w,h).data;
+  let x0=w,y0=h,x1=0,y1=0,found=false;
+  for(let y=0;y<h;y++) for(let x=0;x<w;x++){ if(d[(y*w+x)*4+3]>10){ found=true; if(x<x0)x0=x; if(x>x1)x1=x; if(y<y0)y0=y; if(y>y1)y1=y; } }
+  if(!found) return null;
+  const pad=8; x0=Math.max(0,x0-pad); y0=Math.max(0,y0-pad); x1=Math.min(w-1,x1+pad); y1=Math.min(h-1,y1+pad);
+  const cw=x1-x0+1, ch=y1-y0+1; const c=document.createElement('canvas'); c.width=cw; c.height=ch;
+  c.getContext('2d').drawImage(canvas,x0,y0,cw,ch,0,0,cw,ch); return c;
+}
+function sgUse(){
+  const active=document.querySelector('#sgTabs button.on').dataset.s;
+  const finish=dataUrl=>{ const im=new Image(); im.onload=()=>{ SG.sig={dataUrl, ar:im.width/im.height||3}; document.getElementById('sgPlace').disabled=false; sgCloseModal(); sgPlace(); }; im.src=dataUrl; };
+  if(active==='draw'){
+    if(!_sgPadDrawn){ alert('Please draw your signature first.'); return; }
+    const trimmed=trimTransparent(document.getElementById('sgPad')) || document.getElementById('sgPad');
+    finish(trimmed.toDataURL('image/png'));
+  } else if(active==='type'){
+    const name=(document.getElementById('sgName').value||'').trim(); if(!name){ alert('Type your name first.'); return; }
+    const c=document.createElement('canvas'); const fs=64; const ctx=c.getContext('2d');
+    ctx.font=`italic ${fs}px 'Segoe Script','Bradley Hand','Brush Script MT',cursive`;
+    const tw=Math.ceil(ctx.measureText(name).width)+20; c.width=tw; c.height=fs+30;
+    const x=c.getContext('2d'); x.font=`italic ${fs}px 'Segoe Script','Bradley Hand','Brush Script MT',cursive`; x.fillStyle='#0b1030'; x.textBaseline='middle'; x.fillText(name,10,c.height/2);
+    const trimmed=trimTransparent(c)||c; finish(trimmed.toDataURL('image/png'));
+  } else {
+    if(!SG._upload){ alert('Choose an image first.'); return; } finish(SG._upload);
+  }
+}
+
+/* ============================================================
+   SCAN TO PDF — camera capture (or gallery) -> pages -> PDF.
+   Camera needs a real device + permission; gallery upload always works.
+   ============================================================ */
+let SC=null;
+function renderScan(t){
+  SC={ shots:[], stream:null, enhance:false };
+  app().innerHTML=`
+  <section class="tool"><div class="wrap">
+    <span class="back" onclick="location.hash='#/'">${svg('back',18)} All tools</span>
+    <div class="tool-head">
+      <span class="ic" style="background:var(--blue-soft);color:var(--blue)">${svg('scan',30)}</span>
+      <h1>${t.title}</h1><p>${t.desc}</p>
+    </div>
+    <div class="scan-wrap">
+      <div class="scan-cam" id="scCam">
+        <video id="scVideo" playsinline muted></video>
+        <div class="scan-cam-empty" id="scEmpty">
+          <p>Use your device camera to photograph documents.</p>
+          <button class="btn-red" id="scStart">${svg('scan',16)} Start camera</button>
+          <p class="hint" style="margin-top:12px">Camera not available? <label class="linklike" style="cursor:pointer">add photos from your device<input type="file" id="scPick" accept="image/*" capture="environment" multiple hidden></label></p>
+        </div>
+        <button class="scan-shutter" id="scShoot" style="display:none" title="Capture"></button>
+      </div>
+      <div class="scan-side">
+        <div class="field"><label><input type="checkbox" id="scEnhance"> Document mode (boost contrast, greyscale)</label></div>
+        <p class="hint">Captured pages</p>
+        <div class="thumbs" id="scThumbs"></div>
+        <p class="empty-note" id="scNote">No pages yet.</p>
+        <button class="btn-primary" id="scMake" style="margin-top:14px" disabled>${svg('dl',18)} Create PDF</button>
+      </div>
+    </div>
+  </div></section>`;
+  document.getElementById('scStart').onclick=scStart;
+  document.getElementById('scShoot').onclick=scShoot;
+  document.getElementById('scPick').addEventListener('change',e=>{ [...e.target.files].forEach(f=>{ const fr=new FileReader(); fr.onload=()=>scAdd(fr.result); fr.readAsDataURL(f); }); e.target.value=''; });
+  document.getElementById('scEnhance').addEventListener('change',e=>SC.enhance=e.target.checked);
+  document.getElementById('scMake').onclick=scMake;
+  window.addEventListener('hashchange',scStop,{once:true});
+}
+async function scStart(){
+  try{
+    SC.stream=await navigator.mediaDevices.getUserMedia({ video:{ facingMode:{ideal:'environment'} }, audio:false });
+    const v=document.getElementById('scVideo'); v.srcObject=SC.stream; await v.play();
+    document.getElementById('scEmpty').style.display='none';
+    document.getElementById('scShoot').style.display='block';
+    document.getElementById('scCam').classList.add('live');
+  }catch(e){ alert('Could not open the camera ('+e.message+'). You can still add photos from your device using the link below.'); }
+}
+function scStop(){ if(SC&&SC.stream){ SC.stream.getTracks().forEach(t=>t.stop()); SC.stream=null; } }
+function scShoot(){
+  const v=document.getElementById('scVideo'); if(!v.videoWidth) return;
+  const c=document.createElement('canvas'); c.width=v.videoWidth; c.height=v.videoHeight;
+  c.getContext('2d').drawImage(v,0,0);
+  scAdd(c.toDataURL('image/jpeg',0.92));
+}
+function scEnhanceDataUrl(dataUrl){
+  return new Promise(res=>{ const im=new Image(); im.onload=()=>{
+    const c=document.createElement('canvas'); c.width=im.width; c.height=im.height; const x=c.getContext('2d'); x.drawImage(im,0,0);
+    const d=x.getImageData(0,0,c.width,c.height); const p=d.data; const contrast=1.4, int=128*(1-contrast);
+    for(let i=0;i<p.length;i+=4){ let g=0.3*p[i]+0.59*p[i+1]+0.11*p[i+2]; g=g*contrast+int; g=g<0?0:g>255?255:g; p[i]=p[i+1]=p[i+2]=g; }
+    x.putImageData(d,0,0); res(c.toDataURL('image/jpeg',0.9)); }; im.src=dataUrl; });
+}
+async function scAdd(dataUrl){
+  const url = SC.enhance ? await scEnhanceDataUrl(dataUrl) : dataUrl;
+  SC.shots.push(url); scRenderThumbs();
+}
+function scRenderThumbs(){
+  const wrap=document.getElementById('scThumbs'); wrap.innerHTML='';
+  document.getElementById('scNote').style.display=SC.shots.length?'none':'block';
+  document.getElementById('scMake').disabled=!SC.shots.length;
+  SC.shots.forEach((u,i)=>{ const d=document.createElement('div'); d.className='pthumb'; d.style.width='108px';
+    d.innerHTML=`<img src="${u}"><div class="pnum">${i+1}</div><div class="pc"><button class="iconbtn warn">✕</button></div>`;
+    d.querySelector('.iconbtn').onclick=()=>{ SC.shots.splice(i,1); scRenderThumbs(); };
+    wrap.appendChild(d); });
+}
+async function scMake(){
+  if(!SC.shots.length) return;
+  loader(true,'Building PDF…');
+  try{
+    const out=await PDFLib.PDFDocument.create();
+    for(const u of SC.shots){
+      const bytes=dataURLtoBytes(u);
+      const img=/^data:image\/png/i.test(u)?await out.embedPng(bytes):await out.embedJpg(bytes);
+      const page=out.addPage([img.width,img.height]); page.drawImage(img,{x:0,y:0,width:img.width,height:img.height});
+    }
+    const bytes=await out.save(); scStop();
+    downloadNamed(new Blob([bytes],{type:'application/pdf'}),'scan.pdf');
+  }catch(e){ console.error(e); alert('Could not build the PDF: '+e.message); }
+  finally{ loader(false); }
+}
+
+/* ============================================================
+   OCR PDF — read text from scanned pages with Tesseract.js.
+   Outputs: editable Word, plain text, or a searchable PDF.
+   (Tesseract runs in the browser; the engine + language data
+    are fetched from a CDN on first use.)
+   ============================================================ */
+let OC=null;
+function renderOcr(t){
+  OC={ pages:[], results:[] };
+  app().innerHTML=`
+  <section class="tool"><div class="wrap">
+    <span class="back" onclick="location.hash='#/'">${svg('back',18)} All tools</span>
+    <div class="tool-head">
+      <span class="ic" style="background:var(--green-soft);color:var(--green)">${svg('ocr',30)}</span>
+      <h1>${t.title}</h1><p>${t.desc}</p>
+    </div>
+    <div class="dropzone" id="drop">
+      <div class="upic">${svg('upload',30)}</div>
+      <div class="big">Drop a scanned PDF or images</div>
+      <div class="small">or click to browse — everything is read on your device</div>
+      <button class="btn-red" id="pick">Select files</button>
+      <input type="file" id="file" accept="application/pdf,image/png,image/jpeg" multiple hidden>
+    </div>
+    <div id="ocrView" style="display:none;max-width:720px;margin:0 auto">
+      <div class="panel">
+        <h3 id="ocTitle">Ready to read</h3>
+        <p class="hint" id="ocInfo"></p>
+        <button class="btn-primary" id="ocRun">${svg('ocr',18)} Read text (OCR)</button>
+        <div id="ocProg" style="display:none;margin-top:14px"><div class="ocr-bar"><span id="ocBar"></span></div><p class="hint" id="ocStatus" style="margin-top:8px"></p></div>
+        <div id="ocOut" style="display:none;margin-top:16px">
+          <p class="hint">Done. Download as:</p>
+          <div class="row" style="gap:10px">
+            <button class="btn-primary" id="ocWord" style="flex:1;background:var(--blue);box-shadow:none">${svg('word',16)} Word</button>
+            <button class="btn-primary" id="ocTxt" style="flex:1;background:var(--slate);box-shadow:none">Text</button>
+            <button class="btn-primary" id="ocPdf" style="flex:1;background:var(--green);box-shadow:none">Searchable PDF</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div></section>`;
+  const drop=document.getElementById('drop'), input=document.getElementById('file');
+  document.getElementById('pick').onclick=()=>input.click();
+  drop.onclick=e=>{ if(['drop'].includes(e.target.id)||e.target.classList.contains('upic')||e.target.classList.contains('big')||e.target.classList.contains('small')) input.click(); };
+  ['dragover','dragenter'].forEach(ev=>drop.addEventListener(ev,e=>{e.preventDefault();drop.classList.add('drag');}));
+  ['dragleave','drop'].forEach(ev=>drop.addEventListener(ev,e=>{e.preventDefault();drop.classList.remove('drag');}));
+  drop.addEventListener('drop',e=>ocLoad(e.dataTransfer.files));
+  input.addEventListener('change',e=>{ ocLoad(e.target.files); input.value=''; });
+}
+async function ocLoad(files){
+  files=[...files]; if(!files.length) return;
+  loader(true,'Preparing pages…');
+  try{
+    OC.pages=[];
+    for(const f of files){
+      if(f.type==='application/pdf'){
+        const buf=await f.arrayBuffer(); const pdf=await pdfjsLib.getDocument({data:buf.slice(0)}).promise;
+        for(let i=0;i<pdf.numPages;i++){
+          const page=await pdf.getPage(i+1); const vp=page.getViewport({scale:2});
+          const c=document.createElement('canvas'); c.width=vp.width; c.height=vp.height;
+          await page.render({canvasContext:c.getContext('2d'),viewport:vp}).promise;
+          OC.pages.push({canvas:c, w:vp.width, h:vp.height});
+        }
+      } else if(/image\//.test(f.type)){
+        const url=await new Promise(r=>{const fr=new FileReader();fr.onload=()=>r(fr.result);fr.readAsDataURL(f);});
+        const im=await new Promise(r=>{const i=new Image();i.onload=()=>r(i);i.src=url;});
+        const c=document.createElement('canvas'); c.width=im.width; c.height=im.height; c.getContext('2d').drawImage(im,0,0);
+        OC.pages.push({canvas:c, w:im.width, h:im.height});
+      }
+    }
+    document.getElementById('drop').style.display='none';
+    document.getElementById('ocrView').style.display='block';
+    document.getElementById('ocInfo').textContent=`${OC.pages.length} page(s) ready. Reading happens on your device — the OCR engine (~a few MB) downloads once on first use.`;
+    document.getElementById('ocRun').onclick=ocRun;
+  }catch(e){ console.error(e); alert('Could not prepare pages: '+e.message); }
+  finally{ loader(false); }
+}
+function ensureTesseract(){
+  return new Promise((res,rej)=>{
+    if(window.Tesseract) return res();
+    const s=document.createElement('script'); s.src='https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js';
+    s.onload=()=>res(); s.onerror=()=>rej(new Error('Could not load the OCR engine (needs internet the first time).'));
+    document.head.appendChild(s);
+  });
+}
+async function ocRun(){
+  const prog=document.getElementById('ocProg'), bar=document.getElementById('ocBar'), status=document.getElementById('ocStatus');
+  document.getElementById('ocRun').style.display='none'; prog.style.display='block';
+  try{
+    status.textContent='Loading OCR engine…'; await ensureTesseract();
+    const worker=await Tesseract.createWorker('eng',1,{ logger:m=>{ if(m.status && m.progress!=null){ status.textContent=m.status+' — '+Math.round(m.progress*100)+'%'; } } });
+    OC.results=[];
+    for(let i=0;i<OC.pages.length;i++){
+      status.textContent=`Reading page ${i+1} of ${OC.pages.length}…`;
+      bar.style.width=Math.round((i/OC.pages.length)*100)+'%';
+      const { data }=await worker.recognize(OC.pages[i].canvas);
+      OC.results.push({ text:data.text||'', words:data.words||[] });
+    }
+    bar.style.width='100%'; await worker.terminate();
+    status.textContent='Done.';
+    document.getElementById('ocOut').style.display='block';
+    document.getElementById('ocWord').onclick=ocDownloadWord;
+    document.getElementById('ocTxt').onclick=ocDownloadTxt;
+    document.getElementById('ocPdf').onclick=ocDownloadPdf;
+  }catch(e){ console.error(e); alert(e.message||'OCR failed.'); document.getElementById('ocRun').style.display='block'; prog.style.display='none'; }
+}
+function ocAllText(){ return OC.results.map(r=>r.text.trim()).join('\n\n----\n\n'); }
+function ocDownloadTxt(){ downloadNamed(new Blob([ocAllText()],{type:'text/plain'}),'ocr-text.txt'); }
+function ocDownloadWord(){
+  const model=OC.results.map(r=>{
+    const paras=r.text.split(/\n\s*\n/).map(p=>({text:p.replace(/\s*\n\s*/g,' ').trim(), heading:false})).filter(p=>p.text);
+    return paras.length?paras:[{text:'',heading:false}];
+  });
+  const blob=buildWordDoc(model,{pageBreak:true}); downloadNamed(blob,'ocr.doc');
+}
+async function ocDownloadPdf(){
+  loader(true,'Building searchable PDF…');
+  try{
+    const out=await PDFLib.PDFDocument.create();
+    const font=await out.embedFont(PDFLib.StandardFonts.Helvetica);
+    for(let i=0;i<OC.pages.length;i++){
+      const pg=OC.pages[i]; const dataUrl=pg.canvas.toDataURL('image/jpeg',0.85);
+      const img=await out.embedJpg(dataURLtoBytes(dataUrl));
+      const page=out.addPage([pg.w, pg.h]); page.drawImage(img,{x:0,y:0,width:pg.w,height:pg.h});
+      (OC.results[i].words||[]).forEach(wd=>{
+        const b=wd.bbox||{}; const x0=b.x0, y0=b.y0, x1=b.x1, y1=b.y1;
+        if(x0==null) return; const h=Math.max(4,(y1-y0)); const txt=(wd.text||'').trim(); if(!txt) return;
+        try{ page.drawText(txt,{ x:x0, y:pg.h-y1, size:h*0.86, font, color:PDFLib.rgb(0,0,0), opacity:0 }); }catch(e){}
+      });
+    }
+    const bytes=await out.save(); downloadNamed(new Blob([bytes],{type:'application/pdf'}),'searchable.pdf');
+  }catch(e){ console.error(e); alert('Could not build the searchable PDF: '+e.message); }
   finally{ loader(false); }
 }

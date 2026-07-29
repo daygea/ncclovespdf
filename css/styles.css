@@ -413,3 +413,28 @@ footer a:hover{color:#fff}
 .crop-box .ne{right:-8px;top:-8px;cursor:nesw-resize}
 .crop-box .sw{left:-8px;bottom:-8px;cursor:nesw-resize}
 .crop-box .se{right:-8px;bottom:-8px;cursor:nwse-resize}
+
+/* Sign PDF — capture modal */
+.modal{position:fixed;inset:0;background:rgba(23,20,17,.55);backdrop-filter:blur(3px);display:flex;align-items:center;justify-content:center;z-index:1000;padding:16px}
+.modal-card{background:var(--surface);border-radius:16px;box-shadow:var(--shadow-lg);padding:22px;width:100%;max-width:560px}
+.sig-pad{width:100%;height:auto;border:2px dashed var(--line-strong);border-radius:12px;background:#fff;touch-action:none;cursor:crosshair}
+.sig-preview{min-height:80px;display:flex;align-items:center;justify-content:center;border:1px solid var(--line);border-radius:10px;margin-top:12px;background:var(--bg)}
+
+/* Scan to PDF */
+.scan-wrap{display:grid;grid-template-columns:1fr 300px;gap:22px;align-items:start}
+.scan-cam{position:relative;background:#0f1115;border-radius:16px;overflow:hidden;min-height:340px;display:flex;align-items:center;justify-content:center}
+.scan-cam video{width:100%;height:auto;display:none}
+.scan-cam.live video{display:block}
+.scan-cam-empty{color:#cfd4da;text-align:center;padding:30px}
+.scan-cam-empty .hint{color:#9aa2ac}
+.scan-shutter{position:absolute;bottom:16px;left:50%;transform:translateX(-50%);width:62px;height:62px;border-radius:50%;background:#fff;border:5px solid rgba(255,255,255,.5);cursor:pointer;box-shadow:0 4px 16px rgba(0,0,0,.35)}
+.scan-shutter:active{transform:translateX(-50%) scale(.94)}
+.scan-side .thumbs{justify-content:flex-start}
+
+/* OCR progress */
+.ocr-bar{height:8px;background:var(--bg-tint);border-radius:999px;overflow:hidden}
+.ocr-bar span{display:block;height:100%;width:0;background:var(--green);transition:width .3s}
+
+@media (max-width:760px){
+  .scan-wrap{grid-template-columns:1fr}
+}

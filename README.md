@@ -124,3 +124,8 @@ and the `?v=` tags in `index.html` so clients pick up the new version.
 - **Fill Forms** — reads a PDF's interactive fields, fills them, and can flatten.
 
 ## Run it
+
+## New in Wave 2
+- **Sign PDF** — draw, type, or upload a signature; place, move and resize it on any page.
+- **Scan to PDF** — capture pages with the device camera (or add photos), optional document mode, export a PDF. Camera needs HTTPS + permission; gallery upload always works.
+- **OCR PDF** — read text from scanned pages with Tesseract.js (loaded from CDN on first use). Output editable Word, plain text, or a **searchable PDF** (an invisible, selectable text layer over the original image).
