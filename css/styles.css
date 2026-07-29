@@ -191,10 +191,13 @@ footer a:hover{color:#fff}
 /* form controls */
 .field{margin-bottom:16px}
 .field label{display:block;font-weight:600;font-size:13.5px;margin-bottom:7px}
-.field input[type=text],.field input[type=number],.field select{
-  width:100%;padding:10px 12px;border:1px solid var(--line-strong);border-radius:9px;font-size:14px;font-family:inherit;background:var(--bg)
+.field input[type=text],.field input[type=number],.field input[type=date],.field input[type=password],.field input[type=email],.field input[type=tel],.field input[type=search],.field select{
+  width:100%;padding:10px 12px;border:1px solid var(--line-strong);border-radius:9px;font-size:14px;font-family:inherit;background:var(--bg);color:var(--ink);height:42px;-webkit-appearance:none;appearance:none
 }
-.field input:focus,.field select:focus{outline:none;border-color:var(--red);background:#fff}
+.field select{-webkit-appearance:auto;appearance:auto}
+.field input[type=date]{min-height:42px}
+.field input[type=date]::-webkit-calendar-picker-indicator{cursor:pointer;opacity:.6}
+.field input:focus,.field select:focus{outline:none;border-color:var(--red);background:#fff;box-shadow:0 0 0 3px var(--red-soft)}
 .field .row{display:flex;gap:10px}
 .row{display:flex;gap:10px;flex-wrap:wrap}
 .range-row{display:flex;align-items:center;gap:10px}
