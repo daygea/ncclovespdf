@@ -72,6 +72,8 @@ const I = {
   search:'<circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/>',
   doc:'<path d="M14 3v4a1 1 0 0 0 1 1h4"/><path d="M17 21H7a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h7l5 5v11a2 2 0 0 1-2 2Z"/>',
   edit:'<path d="M12 20h9"/><path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z"/>',
+  crop:'<path d="M6 2v14a2 2 0 0 0 2 2h14"/><path d="M18 22V8a2 2 0 0 0-2-2H2"/>',
+  forms:'<rect x="4" y="3" width="16" height="18" rx="2"/><path d="M8 8h8M8 12h8M8 16h5"/>',
   cursor:'<path d="m4 3 6.5 16 2.3-6.7L19.5 10 4 3Z"/>',
   image:'<rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="m21 15-5-5L5 21"/>',
   pen:'<path d="M12 19l7-7 3 3-7 7-3-3z"/><path d="M18 13l-1.5-7.5L2 2l3.5 14.5L13 18l5-5z"/><path d="M2 2l7.5 7.5"/>'
@@ -100,6 +102,10 @@ const TOOLS = [
    desc:'Stamp text over your PDF — opacity, angle and position.'},
   {id:'editpdf', cat:'purple', icon:'edit', title:'Edit PDF', cats:['edit'],
    desc:'Add text, images and freehand drawing on top of your PDF, then save.'},
+  {id:'crop', cat:'purple', icon:'crop', title:'Crop PDF', cats:['edit'],
+   desc:'Trim the page margins or crop to a selected area.'},
+  {id:'forms', cat:'amber', icon:'forms', title:'Fill Forms', cats:['edit'],
+   desc:'Fill in a PDF’s form fields, then optionally flatten them.'},
   {id:'pdf2jpg', cat:'blue', icon:'pdf2jpg', title:'PDF to JPG', cats:['convert'],
    desc:'Turn each PDF page into a high-quality JPG image.'},
   {id:'jpg2pdf', cat:'blue', icon:'jpg2pdf', title:'JPG to PDF', cats:['convert'], images:true,
@@ -198,6 +204,8 @@ function renderTool(id){
   if(t.soon){ renderSoon(t); return; }
   if(t.form){ renderCertificate(t); return; }
   if(t.id==='editpdf'){ renderEdit(t); return; }
+  if(t.id==='crop'){ renderCrop(t); return; }
+  if(t.id==='forms'){ renderForms(t); return; }
 
   const accept = t.images ? 'image/jpeg,image/png' : 'application/pdf';
   app().innerHTML = `
@@ -1753,4 +1761,241 @@ async function applyEditsToPdf(srcBytes, ann){
     }
   }
   return await out.save();
+}
+
+/* ============================================================
+   CROP PDF — drag a crop rectangle on the page; the same crop
+   (as ratios of the page) is applied to every page via pdf-lib.
+   ============================================================ */
+let CR=null;
+function renderCrop(t){
+  CR={ bytes:null, pdf:null, numPages:0, pageIndex:0, scale:1, box:{x:0.06,y:0.06,w:0.88,h:0.88} };
+  app().innerHTML=`
+  <section class="tool"><div class="wrap">
+    <span class="back" onclick="location.hash='#/'">${svg('back',18)} All tools</span>
+    <div class="tool-head">
+      <span class="ic" style="background:var(--purple-soft);color:var(--purple)">${svg('crop',30)}</span>
+      <h1>${t.title}</h1><p>${t.desc}</p>
+    </div>
+    <div class="dropzone" id="drop">
+      <div class="upic">${svg('upload',30)}</div>
+      <div class="big">Drop a PDF here</div>
+      <div class="small">or click to browse — your file stays on your device</div>
+      <button class="btn-red" id="pick">Select PDF file</button>
+      <input type="file" id="file" accept="application/pdf" hidden>
+    </div>
+    <div id="editor" class="editor" style="display:none">
+      <div class="ed-toolbar">
+        <span class="ed-ctl">Drag the box, or its corners, to set the crop area.</span>
+        <span class="ed-spacer"></span>
+        <button class="iconbtn" id="crReset" title="Reset">↺</button>
+        <span class="ed-pages"><button class="iconbtn" id="prevPg">‹</button><span id="pgInfo">1 / 1</span><button class="iconbtn" id="nextPg">›</button></span>
+        <button class="btn-red" id="crSave">${svg('dl',16)} Crop &amp; download</button>
+      </div>
+      <div class="ed-stagewrap" id="edStageWrap"><div class="ed-stage" id="edStage">
+        <canvas id="edCanvas"></canvas>
+        <div id="crOverlay" class="ed-overlay"></div>
+      </div></div>
+      <p class="hint ed-hint">The same crop is applied to every page. Areas outside the box are trimmed.</p>
+    </div>
+  </div></section>`;
+  const drop=document.getElementById('drop'), input=document.getElementById('file');
+  document.getElementById('pick').onclick=()=>input.click();
+  drop.onclick=e=>{ if(e.target.id==='drop'||e.target.classList.contains('upic')||e.target.classList.contains('big')||e.target.classList.contains('small')) input.click(); };
+  ['dragover','dragenter'].forEach(ev=>drop.addEventListener(ev,e=>{e.preventDefault();drop.classList.add('drag');}));
+  ['dragleave','drop'].forEach(ev=>drop.addEventListener(ev,e=>{e.preventDefault();drop.classList.remove('drag');}));
+  drop.addEventListener('drop',e=>crLoad(e.dataTransfer.files[0]));
+  input.addEventListener('change',e=>{ crLoad(e.target.files[0]); input.value=''; });
+  document.getElementById('crReset').onclick=()=>{ CR.box={x:0.06,y:0.06,w:0.88,h:0.88}; crPlaceBox(); };
+  document.getElementById('prevPg').onclick=()=>{ if(CR.pageIndex>0){CR.pageIndex--; crRenderPage();} };
+  document.getElementById('nextPg').onclick=()=>{ if(CR.pageIndex<CR.numPages-1){CR.pageIndex++; crRenderPage();} };
+  document.getElementById('crSave').onclick=crApply;
+  window.addEventListener('resize',()=>{ if(CR&&CR.pdf){ clearTimeout(CR._t); CR._t=setTimeout(crRenderPage,180);} });
+}
+async function crLoad(file){
+  if(!file||file.type!=='application/pdf'){ alert('Please choose a PDF file.'); return; }
+  loader(true,'Opening PDF…');
+  try{
+    CR.bytes=await file.arrayBuffer();
+    CR.pdf=await pdfjsLib.getDocument({data:CR.bytes.slice(0)}).promise;
+    CR.numPages=CR.pdf.numPages; CR.pageIndex=0;
+    document.getElementById('drop').style.display='none';
+    document.getElementById('editor').style.display='block';
+    await crRenderPage();
+  }catch(e){ console.error(e); alert('Could not open this PDF: '+e.message); }
+  finally{ loader(false); }
+}
+async function crRenderPage(){
+  const page=await CR.pdf.getPage(CR.pageIndex+1);
+  const wrap=document.getElementById('edStageWrap');
+  const avail=Math.min((wrap.clientWidth||900)-2, 900);
+  const base=page.getViewport({scale:1});
+  CR.scale=Math.max(0.2, avail/base.width);
+  const vp=page.getViewport({scale:CR.scale});
+  const canvas=document.getElementById('edCanvas'); const dpr=window.devicePixelRatio||1;
+  canvas.width=Math.floor(vp.width*dpr); canvas.height=Math.floor(vp.height*dpr);
+  canvas.style.width=vp.width+'px'; canvas.style.height=vp.height+'px';
+  const ctx=canvas.getContext('2d'); ctx.setTransform(dpr,0,0,dpr,0,0);
+  ctx.fillStyle='#fff'; ctx.fillRect(0,0,vp.width,vp.height);
+  await page.render({canvasContext:ctx,viewport:vp}).promise;
+  const ov=document.getElementById('crOverlay'); ov.style.width=vp.width+'px'; ov.style.height=vp.height+'px';
+  document.getElementById('pgInfo').textContent=(CR.pageIndex+1)+' / '+CR.numPages;
+  document.getElementById('prevPg').disabled=CR.pageIndex===0;
+  document.getElementById('nextPg').disabled=CR.pageIndex>=CR.numPages-1;
+  crPlaceBox();
+}
+function crPlaceBox(){
+  const ov=document.getElementById('crOverlay'); if(!ov) return;
+  const W=ov.clientWidth, H=ov.clientHeight; const b=CR.box;
+  ov.innerHTML=`<div class="crop-box" id="cropBox" style="left:${b.x*W}px;top:${b.y*H}px;width:${b.w*W}px;height:${b.h*H}px">
+    <span class="ch nw"></span><span class="ch ne"></span><span class="ch sw"></span><span class="ch se"></span></div>`;
+  const box=document.getElementById('cropBox');
+  box.addEventListener('pointerdown',ev=>{ if(ev.target.classList.contains('ch')) return; crDrag(ev); });
+  box.querySelectorAll('.ch').forEach(h=>h.addEventListener('pointerdown',ev=>crResize(ev, h.classList[1])));
+}
+function crRect(){ const ov=document.getElementById('crOverlay'); return ov.getBoundingClientRect(); }
+function crClamp(){ const b=CR.box; b.x=Math.max(0,Math.min(b.x,1-0.05)); b.y=Math.max(0,Math.min(b.y,1-0.05));
+  b.w=Math.max(0.05,Math.min(b.w,1-b.x)); b.h=Math.max(0.05,Math.min(b.h,1-b.y)); }
+function crDrag(e){
+  e.preventDefault(); const r=crRect(); const b=CR.box; const sx=e.clientX, sy=e.clientY, ox=b.x, oy=b.y;
+  const move=ev=>{ b.x=ox+(ev.clientX-sx)/r.width; b.y=oy+(ev.clientY-sy)/r.height;
+    b.x=Math.max(0,Math.min(b.x,1-b.w)); b.y=Math.max(0,Math.min(b.y,1-b.h)); crPlaceBox(); };
+  const up=()=>{ window.removeEventListener('pointermove',move); window.removeEventListener('pointerup',up); };
+  window.addEventListener('pointermove',move); window.addEventListener('pointerup',up);
+}
+function crResize(e,corner){
+  e.preventDefault(); e.stopPropagation(); const r=crRect(); const b=CR.box;
+  const x2=b.x+b.w, y2=b.y+b.h; const sx=e.clientX, sy=e.clientY, o={x:b.x,y:b.y,w:b.w,h:b.h};
+  const move=ev=>{ const dx=(ev.clientX-sx)/r.width, dy=(ev.clientY-sy)/r.height;
+    if(corner.indexOf('w')>=0){ b.x=Math.min(o.x+dx, x2-0.05); b.w=x2-b.x; }
+    if(corner.indexOf('e')>=0){ b.w=Math.max(0.05, Math.min(o.w+dx, 1-b.x)); }
+    if(corner.indexOf('n')>=0){ b.y=Math.min(o.y+dy, y2-0.05); b.h=y2-b.y; }
+    if(corner.indexOf('s')>=0){ b.h=Math.max(0.05, Math.min(o.h+dy, 1-b.y)); }
+    crClamp(); crPlaceBox(); };
+  const up=()=>{ window.removeEventListener('pointermove',move); window.removeEventListener('pointerup',up); };
+  window.addEventListener('pointermove',move); window.addEventListener('pointerup',up);
+}
+async function crApply(){
+  loader(true,'Cropping…');
+  try{
+    const out=await PDFLib.PDFDocument.load(CR.bytes);
+    const b=CR.box;
+    out.getPages().forEach(pg=>{
+      const {width,height}=pg.getSize();
+      const cw=b.w*width, ch=b.h*height, cx=b.x*width, cy=height-(b.y*height)-ch;
+      pg.setCropBox(cx,cy,cw,ch); pg.setMediaBox(cx,cy,cw,ch);
+    });
+    const bytes=await out.save();
+    downloadNamed(new Blob([bytes],{type:'application/pdf'}),'cropped.pdf');
+    document.querySelector('#editor .ed-hint').textContent='✓ Cropped. Your PDF has been downloaded.';
+  }catch(e){ console.error(e); alert('Could not crop: '+e.message); }
+  finally{ loader(false); }
+}
+
+/* ============================================================
+   FILL PDF FORMS — read the PDF's AcroForm fields, fill them,
+   optionally flatten, then save. All via pdf-lib.
+   ============================================================ */
+let FM=null;
+function renderForms(t){
+  FM={doc:null,form:null,fields:[]};
+  app().innerHTML=`
+  <section class="tool"><div class="wrap">
+    <span class="back" onclick="location.hash='#/'">${svg('back',18)} All tools</span>
+    <div class="tool-head">
+      <span class="ic" style="background:var(--amber-soft);color:#b9760a">${svg('forms',30)}</span>
+      <h1>${t.title}</h1><p>${t.desc}</p>
+    </div>
+    <div class="dropzone" id="drop">
+      <div class="upic">${svg('upload',30)}</div>
+      <div class="big">Drop a fillable PDF here</div>
+      <div class="small">or click to browse — your file stays on your device</div>
+      <button class="btn-red" id="pick">Select PDF file</button>
+      <input type="file" id="file" accept="application/pdf" hidden>
+    </div>
+    <div id="formsView" style="display:none;max-width:720px;margin:0 auto">
+      <div class="panel">
+        <h3 id="fmTitle">Form fields</h3>
+        <div id="fmFields"></div>
+        <div class="field" style="margin-top:6px"><label><input type="checkbox" id="fmFlatten"> Flatten (make fields no longer editable)</label></div>
+        <button class="btn-primary" id="fmSave">${svg('dl',18)} Fill &amp; download</button>
+        <p class="hint" id="fmNote" style="text-align:center;margin-top:10px"></p>
+      </div>
+    </div>
+  </div></section>`;
+  const drop=document.getElementById('drop'), input=document.getElementById('file');
+  document.getElementById('pick').onclick=()=>input.click();
+  drop.onclick=e=>{ if(e.target.id==='drop'||e.target.classList.contains('upic')||e.target.classList.contains('big')||e.target.classList.contains('small')) input.click(); };
+  ['dragover','dragenter'].forEach(ev=>drop.addEventListener(ev,e=>{e.preventDefault();drop.classList.add('drag');}));
+  ['dragleave','drop'].forEach(ev=>drop.addEventListener(ev,e=>{e.preventDefault();drop.classList.remove('drag');}));
+  drop.addEventListener('drop',e=>fmLoad(e.dataTransfer.files[0]));
+  input.addEventListener('change',e=>{ fmLoad(e.target.files[0]); input.value=''; });
+}
+async function fmLoad(file){
+  if(!file||file.type!=='application/pdf'){ alert('Please choose a PDF file.'); return; }
+  loader(true,'Reading form…');
+  try{
+    const bytes=await file.arrayBuffer();
+    const doc=await PDFLib.PDFDocument.load(bytes);
+    const form=doc.getForm();
+    const fields=form.getFields();
+    FM.doc=doc; FM.form=form; FM.fields=fields;
+    document.getElementById('drop').style.display='none';
+    document.getElementById('formsView').style.display='block';
+    const wrap=document.getElementById('fmFields');
+    const fillable=fields.filter(f=> f instanceof PDFLib.PDFTextField || f instanceof PDFLib.PDFCheckBox || f instanceof PDFLib.PDFDropdown || f instanceof PDFLib.PDFRadioGroup || f instanceof PDFLib.PDFOptionList);
+    if(!fillable.length){
+      document.getElementById('fmTitle').textContent='No fillable fields found';
+      wrap.innerHTML=`<p class="hint">This PDF doesn’t contain interactive form fields. To add text on top of it instead, use <a href="#/tool/editpdf" style="color:var(--red);font-weight:600">Edit PDF</a>.</p>`;
+      document.getElementById('fmSave').style.display='none';
+      document.getElementById('fmFlatten').closest('.field').style.display='none';
+      return;
+    }
+    document.getElementById('fmTitle').textContent=`Form fields (${fillable.length})`;
+    wrap.innerHTML=fillable.map((f,i)=>fmFieldHtml(f,i)).join('');
+    FM.fillable=fillable;
+    document.getElementById('fmSave').onclick=fmSave;
+  }catch(e){ console.error(e); alert('Could not read this PDF: '+e.message); }
+  finally{ loader(false); }
+}
+function esc(s){ return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
+function fmFieldHtml(f,i){
+  const name=esc(f.getName());
+  if(f instanceof PDFLib.PDFTextField){
+    const v=esc(f.getText()||''); const multi=f.isMultiline&&f.isMultiline();
+    return `<div class="field"><label>${name}</label>${multi
+      ? `<textarea data-fidx="${i}" rows="3" style="width:100%;padding:10px 12px;border:1px solid var(--line-strong);border-radius:9px;font-family:inherit;font-size:14px;background:var(--bg)">${v}</textarea>`
+      : `<input type="text" data-fidx="${i}" value="${v}">`}</div>`;
+  }
+  if(f instanceof PDFLib.PDFCheckBox){
+    return `<div class="field"><label><input type="checkbox" data-fidx="${i}" ${f.isChecked()?'checked':''}> ${name}</label></div>`;
+  }
+  if(f instanceof PDFLib.PDFDropdown || f instanceof PDFLib.PDFOptionList){
+    const opts=f.getOptions()||[]; const sel=(f.getSelected()||[])[0];
+    return `<div class="field"><label>${name}</label><select data-fidx="${i}"><option value="">— select —</option>${opts.map(o=>`<option ${o===sel?'selected':''}>${esc(o)}</option>`).join('')}</select></div>`;
+  }
+  if(f instanceof PDFLib.PDFRadioGroup){
+    const opts=f.getOptions()||[]; const sel=f.getSelected();
+    return `<div class="field"><label>${name}</label><select data-fidx="${i}"><option value="">— select —</option>${opts.map(o=>`<option ${o===sel?'selected':''}>${esc(o)}</option>`).join('')}</select></div>`;
+  }
+  return '';
+}
+async function fmSave(){
+  loader(true,'Filling form…');
+  try{
+    FM.fillable.forEach((f,i)=>{
+      const el=document.querySelector(`[data-fidx="${i}"]`); if(!el) return;
+      try{
+        if(f instanceof PDFLib.PDFTextField) f.setText(el.value||'');
+        else if(f instanceof PDFLib.PDFCheckBox){ el.checked?f.check():f.uncheck(); }
+        else if(f instanceof PDFLib.PDFDropdown || f instanceof PDFLib.PDFOptionList){ if(el.value) f.select(el.value); }
+        else if(f instanceof PDFLib.PDFRadioGroup){ if(el.value) f.select(el.value); }
+      }catch(err){ /* skip a field that rejects a value */ }
+    });
+    if(document.getElementById('fmFlatten').checked){ try{ FM.form.flatten(); }catch(e){} }
+    const bytes=await FM.doc.save();
+    downloadNamed(new Blob([bytes],{type:'application/pdf'}),'filled.pdf');
+    document.getElementById('fmNote').textContent='✓ Filled. Your PDF has been downloaded.';
+  }catch(e){ console.error(e); alert('Could not fill the form: '+e.message); }
+  finally{ loader(false); }
 }

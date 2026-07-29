@@ -57,6 +57,28 @@ and tells you so.
 > that script is blocked/offline, the certificate still issues fine — just
 > without the QR image — and verification by typed code still works.
 
+## Locking the certificate generator
+Generating certificates is password-protected; **verifying** a certificate is
+open to everyone (no password). The default password is **`NCC-PAC-2026`** —
+change it before real use.
+
+To set your own password:
+1. Open the deployed site, press F12 for the console, and run
+   `ncclovespdfHash('your new password')` — copy the printed hash.
+2. Paste it into `GATE.passHash` near the top of `js/app.js`.
+3. If you use the shared registry, set the **same** password in
+   `server/Code.gs` (the `PASSWORD` variable) and re-deploy the Web App.
+
+Two layers protect it:
+- **The app gate** hides the generator behind the password. Because this is a
+  static site, this is a *deterrent* — it keeps unauthorised staff out, but a
+  technical user could bypass client-side code. Only the *hash* of the password
+  is in the source, never the plaintext.
+- **The backend check** is the real protection: the Apps Script refuses to
+  register a certificate without the correct password, so even a UI bypass can't
+  write to the shared registry. Use a strong password so the hash can't be
+  guessed. Set `GATE.passHash` to `''` to remove the gate entirely.
+
 ## Run it
 It's a static site — no build step. Open `index.html`, or host it free on
 GitHub Pages / Netlify / Cloudflare Pages.
@@ -80,3 +102,25 @@ img/logo.png
 > your documents). For a fully air-gapped deploy, download
 > `pdf.worker.min.js` (v2.16.105) into `js/` and update `workerSrc` at the top
 > of `app.js`.
+
+## Install as an app (PWA) & offline use
+The site is a Progressive Web App. On a phone or desktop Chrome/Edge you'll get
+an "Install" prompt (or use the browser menu ▸ Install). Once installed it opens
+in its own window and the app shell is cached, so the interface and the
+pdf-lib–based tools work with no connection.
+
+Full offline caveat: PDF *rendering* (page thumbnails, Edit, Crop previews) uses
+the pdf.js **worker**, which is still loaded from a CDN. For 100% offline, download
+`pdf.worker.min.js` (v2.16.105) into `js/`, change the `workerSrc` line at the top
+of `js/app.js` to `js/pdf.worker.min.js`, and add that path to the `SHELL` list in
+`sw.js`. The QR generator is also CDN-loaded (certificates still issue offline,
+just without the QR image).
+
+When you change app files, bump the `CACHE` name in `sw.js` (e.g. `welovepdf-v2`)
+and the `?v=` tags in `index.html` so clients pick up the new version.
+
+## New in this wave
+- **Crop PDF** — drag a crop box on the page; the crop is applied to every page.
+- **Fill Forms** — reads a PDF's interactive fields, fills them, and can flatten.
+
+## Run it

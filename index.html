@@ -6,7 +6,12 @@
   <title>We love pdf — Every PDF tool, 100% in your browser</title>
   <meta name="description" content="Merge, split, rotate, compress, watermark and convert PDFs. Free, fast, and private — your documents never leave your device.">
   <link rel="icon" href="img/logo.png">
-  <link rel="stylesheet" href="css/styles.css?v=gate2">
+  <link rel="manifest" href="manifest.webmanifest">
+  <meta name="theme-color" content="#0b57b8">
+  <link rel="apple-touch-icon" href="img/icon-192.png">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-title" content="welovepdf">
+  <link rel="stylesheet" href="css/styles.css?v=w1">
 
   <!-- Local libraries: documents are processed entirely client-side -->
   <script src="js/pdf-lib.min.js"></script>
@@ -36,6 +41,7 @@
     <a href="#/tool/split">Split PDF</a>
     <a href="#/tool/compress">Compress PDF</a>
     <a href="#/tool/editpdf">Edit PDF</a>
+    <a href="#/tool/crop">Crop PDF</a>
     <a href="#/tool/organize">Organize PDF</a>
     <a href="#/tool/word">PDF to Word</a>
     <a href="#/tool/jpg2pdf">JPG to PDF</a>
@@ -69,6 +75,8 @@
           <li><a href="#/tool/pagenumbers">Page numbers</a></li>
           <li><a href="#/tool/watermark">Watermark</a></li>
           <li><a href="#/tool/editpdf">Edit PDF</a></li>
+          <li><a href="#/tool/crop">Crop PDF</a></li>
+          <li><a href="#/tool/forms">Fill Forms</a></li>
         </ul>
       </div>
       <div>
@@ -89,6 +97,11 @@
 
 <script>
 document.getElementById('yr').textContent = new Date().getFullYear();
+if ('serviceWorker' in navigator) {
+  window.addEventListener('load', function(){
+    navigator.serviceWorker.register('sw.js').catch(function(){ /* offline mode unavailable */ });
+  });
+}
 (function(){
   var btn=document.getElementById('menuBtn'), menu=document.getElementById('mobileMenu');
   function close(){ menu.classList.remove('open'); btn.setAttribute('aria-expanded','false'); btn.textContent='☰'; }
@@ -98,6 +111,6 @@ document.getElementById('yr').textContent = new Date().getFullYear();
   window.addEventListener('hashchange',close);
 })();
 </script>
-<script src="js/app.js?v=gate2"></script>
+<script src="js/app.js?v=w1"></script>
 </body>
 </html>

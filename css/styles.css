@@ -405,3 +405,11 @@ footer a:hover{color:#fff}
 .gate-panel .field{text-align:left;margin-top:14px}
 .linklike{background:none;border:none;color:var(--muted);font-weight:600;font-size:13px;cursor:pointer;text-decoration:underline;padding:4px}
 .linklike:hover{color:var(--ink)}
+
+/* crop tool */
+.crop-box{position:absolute;border:2px solid var(--red);box-shadow:0 0 0 9999px rgba(11,87,184,.20);cursor:move;box-sizing:border-box;touch-action:none}
+.crop-box .ch{position:absolute;width:14px;height:14px;background:#fff;border:2px solid var(--red);border-radius:3px;touch-action:none}
+.crop-box .nw{left:-8px;top:-8px;cursor:nwse-resize}
+.crop-box .ne{right:-8px;top:-8px;cursor:nesw-resize}
+.crop-box .sw{left:-8px;bottom:-8px;cursor:nesw-resize}
+.crop-box .se{right:-8px;bottom:-8px;cursor:nwse-resize}

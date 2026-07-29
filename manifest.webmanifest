@@ -1,0 +1,15 @@
+{
+  "name": "We love pdf — NCC PDF tools",
+  "short_name": "welovepdf",
+  "description": "Merge, split, edit, crop, fill forms, convert and issue certificates — 100% in your browser.",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#f6f3ef",
+  "theme_color": "#0b57b8",
+  "icons": [
+    { "src": "img/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any maskable" },
+    { "src": "img/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any maskable" }
+  ]
+}
