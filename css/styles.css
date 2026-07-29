@@ -393,3 +393,12 @@ footer a:hover{color:#fff}
 .cert-paper .c-verify .c-vtext{font-size:9.5px;color:#333;line-height:1.35;font-family:var(--body)}
 .vc-badge{font-size:10.5px;font-weight:700;background:var(--green-soft);color:var(--green);padding:2px 8px;border-radius:999px;margin-left:6px}
 .vc-badge.local{background:var(--bg-tint);color:var(--muted)}
+
+/* certificate generator password gate */
+.gate-wrap{max-width:440px;margin:0 auto}
+.gate-panel{text-align:center}
+.gate-panel .gate-lock{width:64px;height:64px;border-radius:16px;background:var(--red-soft);color:var(--red);display:inline-grid;place-items:center;margin-bottom:6px}
+.gate-panel h3{margin:4px 0 6px}
+.gate-panel .field{text-align:left;margin-top:14px}
+.linklike{background:none;border:none;color:var(--muted);font-weight:600;font-size:13px;cursor:pointer;text-decoration:underline;padding:4px}
+.linklike:hover{color:var(--ink)}

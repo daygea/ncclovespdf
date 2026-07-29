@@ -807,6 +807,43 @@ const REGISTRY = {
 };
 const registryEnabled = () => !!(REGISTRY.url && /^https?:\/\//.test(REGISTRY.url));
 
+/* ============================================================
+   GENERATOR PASSWORD GATE
+   Generating (and viewing the generator form) requires a password.
+   Verifying a certificate is always open to everyone.
+
+   passHash below is the SHA-256 of the password — the plaintext is
+   NOT stored in the code. Default password is "NCC-PAC-2026".
+
+   To set your OWN password: open this site, open the browser console
+   (F12) and run:   ncclovespdfHash('your new password')
+   then paste the printed hash into GATE.passHash and also set the
+   same password in server/Code.gs (PASSWORD) if you use the shared
+   registry. Set passHash to '' to remove the gate entirely.
+
+   NOTE: a client-side check is a deterrent, not strong security —
+   the real protection is the password check in the backend, which
+   refuses to register a certificate without the correct password.
+   ============================================================ */
+const GATE = {
+  passHash: 'd6f59d9ec159864203f3401be624ffcd3ba75190465b9e44be504aae36ef7d34'
+};
+const GATE_KEY='ncc_gen_ok';
+async function sha256Hex(str){
+  const buf=await crypto.subtle.digest('SHA-256', new TextEncoder().encode(String(str)));
+  return [...new Uint8Array(buf)].map(b=>b.toString(16).padStart(2,'0')).join('');
+}
+window.ncclovespdfHash = async (pw)=>{ const h=await sha256Hex(pw); console.log('SHA-256:', h); return h; };
+const gateRequired = () => !!GATE.passHash;
+const gateUnlocked = () => !gateRequired() || sessionStorage.getItem(GATE_KEY)==='1';
+const gatePassword = () => sessionStorage.getItem('ncc_gen_pw')||'';
+async function gateTry(pw){
+  const h=await sha256Hex(pw);
+  if(h===GATE.passHash){ try{ sessionStorage.setItem(GATE_KEY,'1'); sessionStorage.setItem('ncc_gen_pw',pw); }catch(e){} return true; }
+  return false;
+}
+function gateLock(){ try{ sessionStorage.removeItem(GATE_KEY); sessionStorage.removeItem('ncc_gen_pw'); }catch(e){} }
+
 function recordFrom(d){
   return { certNo:d.certNo, code:d.certTail, contractor:d.contractor, address:d.contractorAddress,
     projectTitle:d.projectTitle, issueDate:d.issueDateText, awardDate:d.awardText,
@@ -824,10 +861,11 @@ async function registrySave(record){
     try{
       const r=await fetch(REGISTRY.url,{ method:'POST',
         headers:{'Content-Type':'text/plain;charset=utf-8'},  // text/plain avoids a CORS preflight
-        body:JSON.stringify({action:'save', record}) });
+        body:JSON.stringify({action:'save', record, password:gatePassword()}) });
       const j=await r.json();
       if(j && j.ok){ reg[record.certNo]=record; saveRegistry(reg); return {ok:true, shared:true}; }
       if(j && j.duplicate){ return {duplicate:true}; }
+      if(j && j.error==='unauthorized'){ return {unauthorized:true}; }
     }catch(e){ /* network/CORS issue — fall back to local below */ }
     if(reg[record.certNo]) return {duplicate:true};
     reg[record.certNo]=record; saveRegistry(reg); return {ok:true, shared:false, degraded:true};
@@ -958,20 +996,20 @@ function validateCert(d){
    View
    ============================================================ */
 function renderCertificate(t, deepCode){
-  app().innerHTML=`
-  <section class="tool"><div class="wrap">
-    <span class="back" onclick="location.hash='#/'">${svg('back',18)} All tools</span>
-    <div class="tool-head">
-      <span class="ic" style="background:var(--slate-soft);color:var(--slate)">${svg('certificate',30)}</span>
-      <h1>${t.title}</h1><p>${t.desc}</p>
-    </div>
+  const locked = !gateUnlocked();
 
-    <div class="seg" id="certTabs" style="max-width:360px;margin:0 auto 26px">
-      <button class="on" data-t="gen">Generate</button>
-      <button data-t="verify">Verify a number</button>
-    </div>
+  const lockInner = `
+      <div class="panel gate-panel">
+        <div class="gate-lock">${svg('shield',34)}</div>
+        <h3>Password required</h3>
+        <p class="hint">Certificate generation is restricted. Enter the password to continue — anyone can still verify a certificate under the <b>Verify a number</b> tab.</p>
+        <div class="field"><label>Password</label>
+          <input type="password" id="gatePw" placeholder="Enter password" autocomplete="off"></div>
+        <button class="btn-primary" id="gateGo">Unlock</button>
+        <p class="hint" id="gateErr" style="color:var(--red);margin-top:10px"></p>
+      </div>`;
 
-    <div id="genView" class="cert-layout">
+  const formInner = `
       <div class="panel">
         <h3>Certificate details</h3>
         <p class="hint">Issued by ${ISSUER.name}. ${registryEnabled()?'Numbers are checked against the shared registry and verifiable from any device.':'Stored on this device — enable the shared registry for org-wide verification.'}</p>
@@ -1012,13 +1050,28 @@ function renderCertificate(t, deepCode){
         </div>
         <p class="hint" style="text-align:center;margin-top:10px">Both files match the approved template and leave space at the top and bottom for your pre-printed letter-headed paper.</p>
         <p class="hint" id="saveNote" style="text-align:center;margin-top:8px"></p>
+        <p style="text-align:center;margin-top:10px"><button class="linklike" id="gateLockBtn">🔒 Lock generator</button></p>
       </div>
 
       <div class="preview-wrap">
         <div class="preview-label">Live preview</div>
         <div id="certPreview" class="cert-paper"></div>
-      </div>
+      </div>`;
+
+  app().innerHTML=`
+  <section class="tool"><div class="wrap">
+    <span class="back" onclick="location.hash='#/'">${svg('back',18)} All tools</span>
+    <div class="tool-head">
+      <span class="ic" style="background:var(--slate-soft);color:var(--slate)">${svg('certificate',30)}</span>
+      <h1>${t.title}</h1><p>${t.desc}</p>
     </div>
+
+    <div class="seg" id="certTabs" style="max-width:360px;margin:0 auto 26px">
+      <button class="on" data-t="gen">Generate</button>
+      <button data-t="verify">Verify a number</button>
+    </div>
+
+    <div id="genView" class="${locked?'gate-wrap':'cert-layout'}">${locked?lockInner:formInner}</div>
 
     <div id="verifyView" style="display:none;max-width:620px;margin:0 auto">
       <div class="panel">
@@ -1044,28 +1097,38 @@ function renderCertificate(t, deepCode){
     if(v==='verify') renderRecent();
   });
 
-  // init values
-  document.getElementById('cCertNo').value=genCertId();
-  document.getElementById('cIssue').value=formatDateLong(new Date());
-  document.getElementById('regenId').onclick=()=>{ document.getElementById('cCertNo').value=genCertId(); updatePreview(); };
+  if(locked){
+    const go=async()=>{
+      const pw=document.getElementById('gatePw').value;
+      if(await gateTry(pw)){ renderCertificate(t, deepCode); }
+      else { document.getElementById('gateErr').textContent='Incorrect password. Please try again.'; }
+    };
+    document.getElementById('gateGo').onclick=go;
+    document.getElementById('gatePw').addEventListener('keydown',e=>{ if(e.key==='Enter') go(); });
+  } else {
+    // init values
+    document.getElementById('cCertNo').value=genCertId();
+    document.getElementById('cIssue').value=formatDateLong(new Date());
+    document.getElementById('regenId').onclick=()=>{ document.getElementById('cCertNo').value=genCertId(); updatePreview(); };
 
-  // live preview + amount words
-  ['cName','cAddr','cTitle','cAward','cDeliver','cAmount','cCertNo'].forEach(id=>{
-    document.getElementById(id).addEventListener('input',updatePreview);
-  });
-  document.getElementById('cAmount').addEventListener('input',()=>{
-    const a=parseAmount(document.getElementById('cAmount').value);
-    document.getElementById('amtWords').textContent = a ? amountInWords(a.naira,a.kobo) : '';
-  });
+    // live preview + amount words
+    ['cName','cAddr','cTitle','cAward','cDeliver','cAmount','cCertNo'].forEach(id=>{
+      document.getElementById(id).addEventListener('input',updatePreview);
+    });
+    document.getElementById('cAmount').addEventListener('input',()=>{
+      const a=parseAmount(document.getElementById('cAmount').value);
+      document.getElementById('amtWords').textContent = a ? amountInWords(a.naira,a.kobo) : '';
+    });
 
-  document.getElementById('dlPdf').onclick=()=>issueCertificate('pdf');
-  document.getElementById('dlWord').onclick=()=>issueCertificate('word');
+    document.getElementById('dlPdf').onclick=()=>issueCertificate('pdf');
+    document.getElementById('dlWord').onclick=()=>issueCertificate('word');
+    document.getElementById('gateLockBtn').onclick=()=>{ gateLock(); renderCertificate(t); };
+    updatePreview();
+  }
 
-  // verify
+  // verify (always available)
   document.getElementById('vGo').onclick=doVerify;
   document.getElementById('vInput').addEventListener('keydown',e=>{ if(e.key==='Enter') doVerify(); });
-
-  updatePreview();
 
   // deep link from a QR scan: #/verify/<code>
   if(deepCode){
@@ -1127,6 +1190,7 @@ async function issueCertificate(kind){
   }catch(e){ loader(false); alert('Could not register the certificate: '+e.message); return; }
 
   if(res && res.duplicate){ loader(false); alert('Could not allocate a unique number — please try again.'); return; }
+  if(res && res.unauthorized){ loader(false); gateLock(); alert('The registry rejected the password. Please re-enter it.'); renderCertificate(getTool('certificate')); return; }
 
   try{
     if(kind==='pdf'){ const blob=await buildCertPdf(d); downloadNamed(blob,`certificate-${d.certTail}.pdf`); }
