@@ -7,11 +7,46 @@
 
 
 /* pdf.js worker (worker file only — your documents stay on-device) */
-GATE.passHash = '2fa9df2fe61de377c7396f534151d7b16e7e61f3b5398d04133e19a7d8333d49';
 if (window.pdfjsLib) {
   pdfjsLib.GlobalWorkerOptions.workerSrc =
     'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/2.16.105/pdf.worker.min.js';
 }
+
+/* ============================================================
+   GENERATOR PASSWORD GATE  (declared first so it is always
+   initialized before anything can reference it)
+   Generating (and viewing the generator form) requires a password.
+   Verifying a certificate is always open to everyone.
+
+   passHash below is the SHA-256 of the password — the plaintext is
+   NOT stored in the code. Default password is "NCC-PAC-2026".
+
+   To set your OWN password: open this site, open the browser console
+   (F12) and run:   ncclovespdfHash('your new password')
+   then paste the printed hash into GATE.passHash and also set the
+   same password in server/Code.gs (PASSWORD) if you use the shared
+   registry. Set passHash to '' to remove the gate entirely.
+
+   NOTE: a client-side check is a deterrent, not strong security —
+   the real protection is the password check in the backend, which
+   refuses to register a certificate without the correct password.
+   ============================================================ */
+var GATE = { passHash: 'd6f59d9ec159864203f3401be624ffcd3ba75190465b9e44be504aae36ef7d34' };
+var GATE_KEY='ncc_gen_ok';
+async function sha256Hex(str){
+  const buf=await crypto.subtle.digest('SHA-256', new TextEncoder().encode(String(str)));
+  return [...new Uint8Array(buf)].map(b=>b.toString(16).padStart(2,'0')).join('');
+}
+window.ncclovespdfHash = async (pw)=>{ const h=await sha256Hex(pw); console.log('SHA-256:', h); return h; };
+function gateRequired(){ return !!GATE.passHash; }
+function gateUnlocked(){ return !gateRequired() || sessionStorage.getItem(GATE_KEY)==='1'; }
+function gatePassword(){ return sessionStorage.getItem('ncc_gen_pw')||''; }
+async function gateTry(pw){
+  const h=await sha256Hex(pw);
+  if(h===GATE.passHash){ try{ sessionStorage.setItem(GATE_KEY,'1'); sessionStorage.setItem('ncc_gen_pw',pw); }catch(e){} return true; }
+  return false;
+}
+function gateLock(){ try{ sessionStorage.removeItem(GATE_KEY); sessionStorage.removeItem('ncc_gen_pw'); }catch(e){} }
 
 /* ---------- tiny icon set (stroke, currentColor) ---------- */
 const I = {
@@ -807,43 +842,6 @@ const REGISTRY = {
   url: 'https://script.google.com/macros/s/AKfycbwQ05wjR_ZZ14SLwJY1_va7SVGhJOtC2vgg0nUkluerDS_LKueh1qxT7_Y5qsZk0LEkfA/exec'   // e.g. 'https://script.google.com/macros/s/XXXXXXXX/exec'
 };
 const registryEnabled = () => !!(REGISTRY.url && /^https?:\/\//.test(REGISTRY.url));
-
-/* ============================================================
-   GENERATOR PASSWORD GATE
-   Generating (and viewing the generator form) requires a password.
-   Verifying a certificate is always open to everyone.
-
-   passHash below is the SHA-256 of the password — the plaintext is
-   NOT stored in the code. Default password is "NCC-PAC-2026".
-
-   To set your OWN password: open this site, open the browser console
-   (F12) and run:   ncclovespdfHash('your new password')
-   then paste the printed hash into GATE.passHash and also set the
-   same password in server/Code.gs (PASSWORD) if you use the shared
-   registry. Set passHash to '' to remove the gate entirely.
-
-   NOTE: a client-side check is a deterrent, not strong security —
-   the real protection is the password check in the backend, which
-   refuses to register a certificate without the correct password.
-   ============================================================ */
-const GATE = {
-  passHash: 'd6f59d9ec159864203f3401be624ffcd3ba75190465b9e44be504aae36ef7d34'
-};
-const GATE_KEY='ncc_gen_ok';
-async function sha256Hex(str){
-  const buf=await crypto.subtle.digest('SHA-256', new TextEncoder().encode(String(str)));
-  return [...new Uint8Array(buf)].map(b=>b.toString(16).padStart(2,'0')).join('');
-}
-window.ncclovespdfHash = async (pw)=>{ const h=await sha256Hex(pw); console.log('SHA-256:', h); return h; };
-const gateRequired = () => !!GATE.passHash;
-const gateUnlocked = () => !gateRequired() || sessionStorage.getItem(GATE_KEY)==='1';
-const gatePassword = () => sessionStorage.getItem('ncc_gen_pw')||'';
-async function gateTry(pw){
-  const h=await sha256Hex(pw);
-  if(h===GATE.passHash){ try{ sessionStorage.setItem(GATE_KEY,'1'); sessionStorage.setItem('ncc_gen_pw',pw); }catch(e){} return true; }
-  return false;
-}
-function gateLock(){ try{ sessionStorage.removeItem(GATE_KEY); sessionStorage.removeItem('ncc_gen_pw'); }catch(e){} }
 
 function recordFrom(d){
   return { certNo:d.certNo, code:d.certTail, contractor:d.contractor, address:d.contractorAddress,
