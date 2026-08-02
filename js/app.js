@@ -1021,7 +1021,7 @@ function detectTableRun(built, start, median){
   if(colUse.filter(n=>n>=2).length < 2) return null;   // need >=2 real columns
   const s=runLines[0].style;
   const text=rows.map(r=>r.join(' ')).join(' ');
-  return { block:{type:'table', rows, text, family:s.family, size:s.size}, end:j };
+  return { block:{type:'table', rows, text, y:runLines[0].y, family:s.family, size:s.size}, end:j };
 }
 
 /* Build an editable Word (.doc) file from the extracted model.
