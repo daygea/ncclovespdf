@@ -1,6 +1,6 @@
 /* welovepdf service worker — installable + offline app shell.
    Bump CACHE when you change app files so clients pick up the update. */
-const CACHE = 'welovepdf-v3';
+const CACHE = 'welovepdf-v5';
 const SHELL = [
   './', './index.html',
   './css/styles.css', './js/app.js',

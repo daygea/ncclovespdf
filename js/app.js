@@ -626,8 +626,10 @@ function buildOptions(t){
         for(const p of S.pages){
           const pdf=await getDoc(p.file);
           const page=await pdf.getPage(p.pageIndex+1);
-          const paras=await extractParagraphs(page, detectHead);
-          paras.forEach(x=>totalChars+=x.text.length);
+          let paras;
+          try{ paras=await extractPageBlocks(page, detectHead); }
+          catch(e){ console.error(e); paras=await extractParagraphs(page, detectHead); }
+          paras.forEach(x=>{ if(x.text) totalChars+=x.text.length; });
           model.push(paras);
         }
         if(totalChars < 5){
@@ -709,6 +711,118 @@ async function extractParagraphs(page, detectHead){
   }
   return reconstructParagraphs(items, detectHead);
 }
+
+/* Rich extraction: text + true font + colour (sampled from a render) + link
+   annotations + embedded images. Every enhancement is wrapped so that if it
+   fails on a given PDF it degrades to the plain text/font/table result. */
+async function extractPageBlocks(page, detectHead){
+  const vp=page.getViewport({scale:1});
+  const pageWidth=vp.width;
+  const tc=await page.getTextContent();
+  const styles=tc.styles||{};
+  const items=[];
+  for(const it of tc.items){
+    if(typeof it.str!=='string' || it.str==='') continue;
+    const m=pdfjsLib.Util.transform(vp.transform, it.transform);
+    const size=Math.hypot(m[2],m[3]) || 10;
+    const st=styles[it.fontName]||{};
+    const fam=st.fontFamily||'sans-serif';
+    items.push({x:m[4], y:m[5], size, str:it.str, width:(it.width||0), family:normFamily(fam),
+      bold:/bold|black|heavy|semibold/i.test(fam), italic:/italic|oblique/i.test(fam),
+      fontName:it.fontName, color:null, link:null});
+  }
+  // render once (for colour sampling + to populate image objects)
+  let sampleCanvas=null, sampleScale=1.6;
+  try{
+    let rvp=page.getViewport({scale:sampleScale});
+    if(rvp.width>2200){ sampleScale=2200/vp.width; rvp=page.getViewport({scale:sampleScale}); }
+    const c=document.createElement('canvas'); c.width=Math.ceil(rvp.width); c.height=Math.ceil(rvp.height);
+    const ctx=c.getContext('2d',{willReadFrequently:true});
+    await page.render({canvasContext:ctx, viewport:rvp}).promise;
+    sampleCanvas=c;
+  }catch(e){ sampleCanvas=null; }
+  if(sampleCanvas){
+    const ctx=sampleCanvas.getContext('2d',{willReadFrequently:true});
+    for(const it of items){
+      try{ if(page.commonObjs.has(it.fontName)){ const fo=page.commonObjs.get(it.fontName); const nm=(fo&&fo.name)||'';
+        if(/bold|black|semibold|heavy/i.test(nm)) it.bold=true; if(/italic|oblique/i.test(nm)) it.italic=true; } }catch(e){}
+      it.color=sampleColor(ctx, it, sampleScale);
+    }
+  }
+  // hyperlink annotations
+  try{
+    const ann=await page.getAnnotations();
+    const links=(ann||[]).filter(a=>a.subtype==='Link' && (a.url||a.unsafeUrl)).map(a=>({rect:a.rect, url:a.url||a.unsafeUrl}));
+    for(const it of items){
+      const ix0=it.x, ix1=it.x+it.width, iyTop=vp.height-it.y, iyBot=iyTop-it.size;
+      for(const L of links){ const rx0=Math.min(L.rect[0],L.rect[2]),rx1=Math.max(L.rect[0],L.rect[2]),ry0=Math.min(L.rect[1],L.rect[3]),ry1=Math.max(L.rect[1],L.rect[3]);
+        if(ix0<rx1 && ix1>rx0 && iyBot<ry1 && iyTop>ry0){ it.link=L.url; break; } }
+    }
+  }catch(e){}
+  let blocks;
+  try{ blocks=reconstructParagraphs(items, detectHead, {pageWidth}); }
+  catch(e){ blocks=reconstructParagraphs(items, detectHead); }
+  try{
+    const imgs=await extractImages(page, vp);
+    if(imgs.length){ blocks=blocks.concat(imgs); blocks.sort((a,b)=>(a.y||0)-(b.y||0)); }
+  }catch(e){}
+  return blocks;
+}
+/* average the ink pixels inside a glyph box to estimate text colour */
+function sampleColor(ctx, it, scale){
+  try{
+    const x0=Math.max(0,Math.floor(it.x*scale)), y1=Math.floor(it.y*scale), y0=Math.max(0,Math.floor((it.y-it.size)*scale));
+    const w=Math.min(ctx.canvas.width-x0, Math.max(1,Math.floor((it.width||it.size)*scale)));
+    const h=Math.min(ctx.canvas.height-y0, Math.max(1,y1-y0));
+    if(w<1||h<1) return null;
+    const d=ctx.getImageData(x0,y0,w,h).data;
+    let sr=0,sg=0,sb=0,n=0;
+    for(let i=0;i<d.length;i+=4){ const r=d[i],g=d[i+1],b=d[i+2],a=d[i+3]; if(a<60) continue; const lum=0.3*r+0.59*g+0.11*b; if(lum>190) continue; sr+=r;sg+=g;sb+=b;n++; }
+    if(n<2) return null;
+    const r=Math.round(sr/n),g=Math.round(sg/n),b=Math.round(sb/n);
+    if(r<50&&g<50&&b<50) return null;            // near-black → default
+    return '#'+[r,g,b].map(v=>v.toString(16).padStart(2,'0')).join('');
+  }catch(e){ return null; }
+}
+/* pull embedded images from the operator list (best-effort) */
+async function extractImages(page, vp){
+  const out=[]; const OPS=pdfjsLib.OPS; if(!OPS) return out;
+  const opl=await page.getOperatorList();
+  let ctm=[1,0,0,1,0,0]; const stack=[];
+  for(let i=0;i<opl.fnArray.length;i++){
+    const fn=opl.fnArray[i], a=opl.argsArray[i];
+    if(fn===OPS.save) stack.push(ctm.slice());
+    else if(fn===OPS.restore) ctm=stack.pop()||[1,0,0,1,0,0];
+    else if(fn===OPS.transform) ctm=pdfjsLib.Util.transform(ctm,a);
+    else if(fn===OPS.paintImageXObject || fn===OPS.paintImageXObjectRepeat || fn===OPS.paintJpegXObject){
+      const name=a[0];
+      const wUnits=Math.hypot(ctm[0],ctm[1]), hUnits=Math.hypot(ctm[2],ctm[3]);
+      if(wUnits<24 || hUnits<24) continue;                     // skip icons/bullets
+      const M=pdfjsLib.Util.transform(vp.transform, ctm);
+      const ys=[M[3]*0+M[5], M[3]*1+M[5]]; const topY=Math.min(ys[0],ys[1]);
+      let obj=null; try{ obj=page.objs.get(name); }catch(e){ obj=null; }
+      const dataUrl=imgObjToDataUrl(obj); if(!dataUrl) continue;
+      out.push({type:'image', dataUrl, y:topY, wpt:wUnits});
+    }
+  }
+  return out;
+}
+function imgObjToDataUrl(obj){
+  try{
+    if(!obj) return null;
+    const c=document.createElement('canvas');
+    const bmp=obj.bitmap||(typeof ImageBitmap!=='undefined'&&obj instanceof ImageBitmap?obj:null);
+    if(bmp){ c.width=bmp.width; c.height=bmp.height; c.getContext('2d').drawImage(bmp,0,0); return c.toDataURL('image/png'); }
+    const w=obj.width, h=obj.height, src=obj.data;
+    if(!(src && w && h)) return null;
+    c.width=w; c.height=h; const ctx=c.getContext('2d'); const id=ctx.createImageData(w,h); const dst=id.data;
+    if(src.length===w*h*4){ dst.set(src); }
+    else if(src.length===w*h*3){ for(let i=0,j=0;i<w*h;i++){ dst[j++]=src[i*3];dst[j++]=src[i*3+1];dst[j++]=src[i*3+2];dst[j++]=255; } }
+    else if(src.length===w*h){ for(let i=0,j=0;i<w*h;i++){ const v=src[i]; dst[j++]=v;dst[j++]=v;dst[j++]=v;dst[j++]=255; } }
+    else return null;
+    ctx.putImageData(id,0,0); return c.toDataURL('image/png');
+  }catch(e){ return null; }
+}
 /* Map a pdf.js font-family string to a Word-friendly font name. */
 function normFamily(fam){
   let f=String(fam||'').replace(/["']/g,'').split(',')[0].trim();
@@ -723,21 +837,38 @@ function normFamily(fam){
 }
 /* dominant style among items, weighted by text length */
 function domStyle(items){
-  const tally={};
+  const tally={}, ctally={};
   for(const it of items){
     const key=it.family+'|'+Math.round(it.size*2)/2+'|'+(it.bold?1:0)+'|'+(it.italic?1:0);
     tally[key]=(tally[key]||0)+(it.str.length||1);
+    if(it.color){ ctally[it.color]=(ctally[it.color]||0)+(it.str.length||1); }
   }
   let best=null,bestN=-1; for(const k in tally){ if(tally[k]>bestN){bestN=tally[k];best=k;} }
+  let color=null,cN=-1; for(const k in ctally){ if(ctally[k]>cN){cN=ctally[k];color=k;} }
   const [family,size,bold,italic]=(best||'Calibri|11|0|0').split('|');
-  return {family, size:parseFloat(size), bold:bold==='1', italic:italic==='1'};
+  return {family, size:parseFloat(size), bold:bold==='1', italic:italic==='1', color};
+}
+function lineAlign(left,right,pw){
+  if(!pw) return 'left';
+  const lm=left, rm=pw-right;
+  if(lm>pw*0.14 && rm>pw*0.14 && Math.abs(lm-rm)<pw*0.09) return 'center';
+  if(lm>pw*0.33 && rm<pw*0.13) return 'right';
+  return 'left';
+}
+function listMarker(text){
+  let m=text.match(/^\s*([•·▪◦‣■\-–\u2022])\s+(.+)$/);
+  if(m) return {type:'ul', rest:m[2]};
+  m=text.match(/^\s*(\d{1,3}|[a-zA-Z])[.)]\s+(.+)$/);
+  if(m && m[2].length>1) return {type:'ol', rest:m[2]};
+  return null;
 }
 
 /* Pure reconstruction: items [{x,y,size,str,width}] -> [{text,heading}].
    y is top-down (after the viewport transform). Kept separate from the
    pdf.js call so the grouping logic can be tested in isolation. */
-function reconstructParagraphs(items, detectHead){
+function reconstructParagraphs(items, detectHead, opts){
   if(!items || !items.length) return [];
+  opts=opts||{}; const pw=opts.pageWidth||0;
 
   // group into lines by vertical position
   items=items.slice().sort((a,b)=> a.y-b.y || a.x-b.x);
@@ -747,45 +878,95 @@ function reconstructParagraphs(items, detectHead){
     else { cur={y:it.y, size:it.size, items:[it]}; lines.push(cur); }
   }
 
-  // build text + dominant size/style for each line
+  // build text + dominant size/style + cell segments for each line
   const built=[];
   for(const ln of lines){
     ln.items.sort((a,b)=>a.x-b.x);
-    let text='', prevRight=null, maxSize=0;
+    let text='', prevRight=null, maxSize=0, left=Infinity, right=0;
+    const segs=[]; let seg=null; const linkTally={};
     for(const it of ln.items){
       maxSize=Math.max(maxSize, it.size);
+      left=Math.min(left, it.x); right=Math.max(right, it.x+(it.width||0));
+      if(it.link){ linkTally[it.link]=(linkTally[it.link]||0)+(it.str.length||1); }
       if(prevRight!==null){
         const gap=it.x-prevRight;
+        if(seg && gap > Math.max(it.size,maxSize)*1.4){ segs.push(seg); seg=null; }
         if(gap > it.size*0.3 && !/\s$/.test(text) && !/^\s/.test(it.str)) text+=' ';
       }
-      text+=it.str; prevRight=it.x+it.width;
+      if(!seg) seg={x:it.x, text:''};
+      seg.text+=it.str;
+      text+=it.str; prevRight=it.x+(it.width||0);
     }
+    if(seg) segs.push(seg);
     text=text.replace(/\s+/g,' ').trim();
-    if(text) built.push({y:ln.y, size:maxSize, text, style:domStyle(ln.items)});
+    segs.forEach(s=>{ s.text=s.text.replace(/\s+/g,' ').trim(); });
+    let link=null,lN=0; for(const k in linkTally){ if(linkTally[k]>lN){lN=linkTally[k];link=k;} }
+    if(text) built.push({y:ln.y, size:maxSize, text, style:domStyle(ln.items), segs:segs.filter(s=>s.text), align:lineAlign(left,right,pw), link});
   }
   if(!built.length) return [];
 
-  // median body size for heading detection
   const sizes=built.map(b=>b.size).slice().sort((a,b)=>a-b);
   const median=sizes[Math.floor(sizes.length/2)] || 10;
 
-  // group lines into paragraphs by vertical gaps
-  const paras=[]; let p=null, prevY=null, prevSize=median, prevWasHeading=false;
-  for(const ln of built){
+  // walk lines: detect tabular runs, otherwise group into paragraphs (with lists/align/colour/links)
+  const blocks=[]; let p=null, prevY=null, prevSize=median, prevWasHeading=false;
+  const runOf=(ln)=>{ const s=ln.style; return {text:ln.text, family:s.family, size:s.size, bold:s.bold, italic:s.italic, color:s.color, link:ln.link}; };
+  let i=0;
+  while(i<built.length){
+    const tbl=detectTableRun(built, i, median);
+    if(tbl){ blocks.push(tbl.block); p=null; prevWasHeading=false; prevY=built[tbl.end-1].y; prevSize=median; i=tbl.end; continue; }
+    const ln=built[i];
     const heading = detectHead && ln.size >= median*1.35 && ln.text.length < 120;
     const gap = prevY===null ? 0 : (ln.y - prevY);
-    const s=ln.style;
+    const mk = heading ? null : listMarker(ln.text);
     if(heading){
-      paras.push({text:ln.text, heading:true, family:s.family, size:s.size, bold:s.bold, italic:s.italic}); p=null; prevWasHeading=true;
+      const r=runOf(ln); blocks.push({heading:true, y:ln.y, align:ln.align, runs:[r], text:ln.text}); p=null; prevWasHeading=true;
+    } else if(mk){
+      const r=runOf(ln); r.text=mk.rest; blocks.push({list:mk.type, y:ln.y, align:ln.align, runs:[r], text:mk.rest}); p=null; prevWasHeading=false;
     } else {
       const startNew = p===null || prevWasHeading || gap > prevSize*1.9;
-      if(startNew){ p={text:ln.text, heading:false, family:s.family, size:s.size, bold:s.bold, italic:s.italic}; paras.push(p); }
-      else { p.text += ' ' + ln.text; }
+      if(startNew){ p={y:ln.y, align:ln.align, runs:[runOf(ln)], text:ln.text}; blocks.push(p); }
+      else {
+        const r=runOf(ln), last=p.runs[p.runs.length-1];
+        // merge into previous run only if the styling matches; otherwise keep a distinct run
+        if(last && last.family===r.family && last.size===r.size && last.bold===r.bold && last.italic===r.italic && last.color===r.color && last.link===r.link){ last.text+=' '+r.text; }
+        else p.runs.push(r);
+        p.text += ' ' + r.text;
+      }
       prevWasHeading=false;
     }
-    prevY=ln.y; prevSize=ln.size;
+    prevY=ln.y; prevSize=ln.size; i++;
   }
-  return paras;
+  return blocks;
+}
+
+/* Conservative table detector: a run of >=2 consecutive lines that each split
+   into >=2 cells, whose cell x-positions line up into >=2 columns used by
+   >=2 rows. Returns {block, end} or null. Text-based tables only. */
+function detectTableRun(built, start, median){
+  let j=start; while(j<built.length && built[j].segs.length>=2) j++;
+  if(j-start < 2) return null;
+  const runLines=built.slice(start,j);
+  const tol=Math.max(median,8)*1.6;
+  const xs=[]; runLines.forEach(l=>l.segs.forEach(s=>xs.push(s.x))); xs.sort((a,b)=>a-b);
+  const cols=[];
+  for(const x of xs){
+    const last=cols[cols.length-1];
+    if(!last || x-last.x>tol) cols.push({x, xs:[x]});
+    else { last.xs.push(x); last.x=last.xs.reduce((a,b)=>a+b,0)/last.xs.length; }
+  }
+  if(cols.length<2) return null;
+  const rows=runLines.map(l=>{
+    const cells=new Array(cols.length).fill('');
+    l.segs.forEach(s=>{ let ci=0,best=1e9; cols.forEach((c,k)=>{const d=Math.abs(c.x-s.x); if(d<best){best=d;ci=k;}});
+      cells[ci]=(cells[ci]?cells[ci]+' ':'')+s.text; });
+    return cells;
+  });
+  const colUse=cols.map((_,k)=>rows.filter(r=>r[k]).length);
+  if(colUse.filter(n=>n>=2).length < 2) return null;   // need >=2 real columns
+  const s=runLines[0].style;
+  const text=rows.map(r=>r.join(' ')).join(' ');
+  return { block:{type:'table', rows, text, family:s.family, size:s.size}, end:j };
 }
 
 /* Build an editable Word (.doc) file from the extracted model.
@@ -793,23 +974,48 @@ function reconstructParagraphs(items, detectHead){
    re-saved as .docx. No external libraries, fully offline. */
 function buildWordDoc(model, opts){
   const esc=s=>String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+  const okColor=c=>/^#[0-9a-fA-F]{6}$/.test(c||'');
+  const runHtml=(r)=>{
+    let s='';
+    if(r.family && r.size){ s+=`font-family:'${esc(r.family)}',sans-serif;font-size:${r.size}pt;`; if(r.bold)s+='font-weight:bold;'; if(r.italic)s+='font-style:italic;'; }
+    if(okColor(r.color)) s+=`color:${r.color};`;
+    let h=`<span${s?` style="${s}"`:''}>${esc(r.text)}</span>`;
+    if(r.link) h=`<a href="${esc(r.link)}">${h}</a>`;
+    return h;
+  };
+  const runsHtml=(runs)=> (runs&&runs.length)? runs.map(runHtml).join(' ') : '';
+  const alignCss=(b)=> b.align==='center'?'text-align:center;': b.align==='right'?'text-align:right;':'';
   const parts=[];
-  model.forEach((paras,pi)=>{
+  model.forEach((blocks,pi)=>{
     const breakFirst = pi>0 && opts.pageBreak;
-    if(!paras.length){ parts.push('<p'+(breakFirst?' class="pb"':'')+'>&nbsp;</p>'); return; }
-    paras.forEach((p,idx)=>{
-      const cls=[]; if(breakFirst && idx===0) cls.push('pb');
-      // if the paragraph carries real font info from the PDF, honour it;
-      // otherwise fall back to the heading class / body default.
-      let style='';
-      if(p.family && p.size){
-        style=`font-family:'${esc(p.family)}',sans-serif;font-size:${p.size}pt;`;
-        if(p.bold) style+='font-weight:bold;';
-        if(p.italic) style+='font-style:italic;';
-      } else if(p.heading){ cls.push('h'); }
-      const attr=(cls.length?` class="${cls.join(' ')}"`:'')+(style?` style="${style}"`:'');
-      parts.push(`<p${attr}>${esc(p.text)}</p>`);
-    });
+    if(!blocks.length){ parts.push('<p'+(breakFirst?' style="page-break-before:always"':'')+'>&nbsp;</p>'); return; }
+    let idx=0;
+    while(idx<blocks.length){
+      const b=blocks[idx];
+      const pb = (breakFirst && idx===0) ? 'page-break-before:always;' : '';
+      if(b.type==='image'){
+        const w=b.wpt?`width:${Math.round(b.wpt)}pt;`:'';
+        parts.push(`<p style="${pb}text-align:center;margin:8pt 0"><img src="${b.dataUrl}" style="${w}max-width:100%"></p>`);
+        idx++; continue;
+      }
+      if(b.type==='table'){
+        const rows=b.rows.map(r=>'<tr>'+r.map(c=>`<td>${esc(c||'')}</td>`).join('')+'</tr>').join('');
+        parts.push(`<table class="t" style="${pb}"><tbody>${rows}</tbody></table>`);
+        idx++; continue;
+      }
+      if(b.list){
+        const tag=b.list; const group=[]; let j=idx;
+        while(j<blocks.length && blocks[j].list===tag){ group.push(blocks[j]); j++; }
+        parts.push(`<${tag} style="${pb}margin:6pt 0 6pt 22pt">`+group.map(it=>`<li style="${alignCss(it)}">${runsHtml(it.runs)}</li>`).join('')+`</${tag}>`);
+        idx=j; continue;
+      }
+      // heading / paragraph (run-based)
+      let base=pb+alignCss(b);
+      if(b.heading){ base+='margin:14pt 0 6pt;'; }
+      const inner=runsHtml(b.runs) || esc(b.text||'');
+      parts.push(`<p${base?` style="${base}"`:''}>${inner}</p>`);
+      idx++;
+    }
   });
   const html=`<!DOCTYPE html>
 <html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:w="urn:schemas-microsoft-com:office:word" xmlns="http://www.w3.org/TR/REC-html40">
@@ -820,8 +1026,9 @@ function buildWordDoc(model, opts){
 div.Section1 { page:Section1; }
 body{ font-family:'Calibri','Segoe UI',Arial,sans-serif; font-size:11pt; color:#1a1a1a; line-height:1.4; }
 p{ margin:0 0 8pt; }
-p.h{ font-size:14pt; font-weight:bold; margin:14pt 0 6pt; }
-p.pb{ page-break-before:always; margin:0; }
+img{ height:auto; }
+table.t{ border-collapse:collapse; margin:8pt 0; width:auto; }
+table.t td{ border:1px solid #808080; padding:3pt 6pt; vertical-align:top; font-size:10.5pt; }
 </style></head>
 <body><div class="Section1">
 ${parts.join('\n')}
