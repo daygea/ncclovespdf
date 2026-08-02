@@ -617,7 +617,7 @@ function buildOptions(t){
       o.innerHTML=`<h3>PDF to Word</h3>
         <p class="hint">Pulls the text out of your PDF into an editable Word document. Works best on text-based PDFs (reports, letters, contracts). Scanned or image-only PDFs have no text layer to read — those need OCR.</p>
         <div class="field"><label><input type="checkbox" id="wHead" checked> Detect headings (larger text becomes bold)</label></div>
-        <div class="field"><label><input type="checkbox" id="wBreak" checked> Keep a page break between PDF pages</label></div>
+        <div class="field"><label><input type="checkbox" id="wBreak"> Start each PDF page on a new Word page (off = continuous flow)</label></div>
         ${proc('Convert to Word')}`;
       go(async()=>{
         const detectHead=document.getElementById('wHead').checked;
@@ -759,13 +759,32 @@ async function extractPageBlocks(page, detectHead){
         if(ix0<rx1 && ix1>rx0 && iyBot<ry1 && iyTop>ry0){ it.link=L.url; break; } }
     }
   }catch(e){}
+  // underlines + horizontal rules (best-effort); assign underline to items sitting just above a rule
+  let ruleBlocks=[];
+  try{
+    const rules=await extractGraphics(page, vp);
+    if(rules.length){
+      const used=new Array(rules.length).fill(false);
+      for(const it of items){
+        const ix0=it.x, ix1=it.x+(it.width||0), iw=Math.max(1,ix1-ix0);
+        for(let k=0;k<rules.length;k++){ const r=rules[k];
+          if(r.y> it.y-1 && r.y <= it.y + it.size*0.35){        // just below the baseline
+            const ov=Math.min(ix1,r.x1)-Math.max(ix0,r.x0);
+            if(ov > iw*0.6){ it.underline=true; used[k]=true; }
+          }
+        }
+      }
+      // leftover wide rules become divider blocks
+      rules.forEach((r,k)=>{ if(!used[k] && (r.x1-r.x0)>=120) ruleBlocks.push({type:'rule', y:r.y}); });
+    }
+  }catch(e){}
   let blocks;
   try{ blocks=reconstructParagraphs(items, detectHead, {pageWidth}); }
   catch(e){ blocks=reconstructParagraphs(items, detectHead); }
-  try{
-    const imgs=await extractImages(page, vp);
-    if(imgs.length){ blocks=blocks.concat(imgs); blocks.sort((a,b)=>(a.y||0)-(b.y||0)); }
-  }catch(e){}
+  const extra=[];
+  try{ const imgs=await extractImages(page, vp); imgs.forEach(im=>extra.push(im)); }catch(e){}
+  ruleBlocks.forEach(r=>extra.push(r));
+  if(extra.length){ blocks=blocks.concat(extra); blocks.sort((a,b)=>(a.y||0)-(b.y||0)); }
   return blocks;
 }
 /* average the ink pixels inside a glyph box to estimate text colour */
@@ -807,6 +826,39 @@ async function extractImages(page, vp){
   }
   return out;
 }
+/* Extract horizontal rules (for underlines + dividers) from the operator list.
+   Straight geometry only — paths with curves are skipped. Best-effort. */
+async function extractGraphics(page, vp){
+  const rules=[]; const OPS=pdfjsLib.OPS; if(!OPS) return rules;
+  const opl=await page.getOperatorList();
+  let ctm=[1,0,0,1,0,0]; const stack=[];
+  const applyM=(M,x,y)=>({x:M[0]*x+M[2]*y+M[4], y:M[1]*x+M[3]*y+M[5]});
+  const pushSeg=(ax,ay,bx,by)=>{
+    const M=pdfjsLib.Util.transform(vp.transform, ctm);
+    const A=applyM(M,ax,ay), B=applyM(M,bx,by);
+    if(Math.abs(A.y-B.y) < 2.2){ const x0=Math.min(A.x,B.x), x1=Math.max(A.x,B.x); if(x1-x0 >= 28) rules.push({x0, x1, y:(A.y+B.y)/2}); }
+  };
+  for(let i=0;i<opl.fnArray.length;i++){
+    const fn=opl.fnArray[i], a=opl.argsArray[i];
+    if(fn===OPS.save) stack.push(ctm.slice());
+    else if(fn===OPS.restore) ctm=stack.pop()||[1,0,0,1,0,0];
+    else if(fn===OPS.transform) ctm=pdfjsLib.Util.transform(ctm,a);
+    else if(fn===OPS.rectangle){ const x=a[0],y=a[1],w=a[2],h=a[3]; if(Math.abs(h)<3 && Math.abs(w)>=28){ const cy=y+h/2; pushSeg(x,cy,x+w,cy); } }
+    else if(fn===OPS.constructPath){
+      try{
+        const ops=a[0], co=a[1]; let ci=0, px=0,py=0,sx=0,sy=0;
+        if(ops.some(o=>o===OPS.curveTo||o===OPS.curveTo2||o===OPS.curveTo3)) continue;
+        for(const o of ops){
+          if(o===OPS.moveTo){ px=co[ci++]; py=co[ci++]; sx=px; sy=py; }
+          else if(o===OPS.lineTo){ const nx=co[ci++], ny=co[ci++]; pushSeg(px,py,nx,ny); px=nx; py=ny; }
+          else if(o===OPS.rectangle){ const x=co[ci++],y=co[ci++],w=co[ci++],h=co[ci++]; if(Math.abs(h)<3 && Math.abs(w)>=28){ const cy=y+h/2; pushSeg(x,cy,x+w,cy); } px=x; py=y; }
+          else if(o===OPS.closePath){ pushSeg(px,py,sx,sy); px=sx; py=sy; }
+        }
+      }catch(e){}
+    }
+  }
+  return rules;
+}
 function imgObjToDataUrl(obj){
   try{
     if(!obj) return null;
@@ -839,14 +891,14 @@ function normFamily(fam){
 function domStyle(items){
   const tally={}, ctally={};
   for(const it of items){
-    const key=it.family+'|'+Math.round(it.size*2)/2+'|'+(it.bold?1:0)+'|'+(it.italic?1:0);
+    const key=it.family+'|'+Math.round(it.size*2)/2+'|'+(it.bold?1:0)+'|'+(it.italic?1:0)+'|'+(it.underline?1:0);
     tally[key]=(tally[key]||0)+(it.str.length||1);
     if(it.color){ ctally[it.color]=(ctally[it.color]||0)+(it.str.length||1); }
   }
   let best=null,bestN=-1; for(const k in tally){ if(tally[k]>bestN){bestN=tally[k];best=k;} }
   let color=null,cN=-1; for(const k in ctally){ if(ctally[k]>cN){cN=ctally[k];color=k;} }
-  const [family,size,bold,italic]=(best||'Calibri|11|0|0').split('|');
-  return {family, size:parseFloat(size), bold:bold==='1', italic:italic==='1', color};
+  const [family,size,bold,italic,underline]=(best||'Calibri|11|0|0|0').split('|');
+  return {family, size:parseFloat(size), bold:bold==='1', italic:italic==='1', underline:underline==='1', color};
 }
 function lineAlign(left,right,pw){
   if(!pw) return 'left';
@@ -858,7 +910,9 @@ function lineAlign(left,right,pw){
 function listMarker(text){
   let m=text.match(/^\s*([•·▪◦‣■\-–\u2022])\s+(.+)$/);
   if(m) return {type:'ul', rest:m[2]};
-  m=text.match(/^\s*(\d{1,3}|[a-zA-Z])[.)]\s+(.+)$/);
+  m=text.match(/^\s*(\d+(?:\.\d+)+)\s+(.+)$/);          // 1.1, 1.2.3
+  if(m) return {type:'ol', rest:m[2]};
+  m=text.match(/^\s*(\d{1,3}|[a-zA-Z])[.)]\s+(.+)$/);   // 1.  2)  a.  b)
   if(m && m[2].length>1) return {type:'ol', rest:m[2]};
   return null;
 }
@@ -910,7 +964,7 @@ function reconstructParagraphs(items, detectHead, opts){
 
   // walk lines: detect tabular runs, otherwise group into paragraphs (with lists/align/colour/links)
   const blocks=[]; let p=null, prevY=null, prevSize=median, prevWasHeading=false;
-  const runOf=(ln)=>{ const s=ln.style; return {text:ln.text, family:s.family, size:s.size, bold:s.bold, italic:s.italic, color:s.color, link:ln.link}; };
+  const runOf=(ln)=>{ const s=ln.style; return {text:ln.text, family:s.family, size:s.size, bold:s.bold, italic:s.italic, underline:s.underline, color:s.color, link:ln.link}; };
   let i=0;
   while(i<built.length){
     const tbl=detectTableRun(built, i, median);
@@ -922,7 +976,8 @@ function reconstructParagraphs(items, detectHead, opts){
     if(heading){
       const r=runOf(ln); blocks.push({heading:true, y:ln.y, align:ln.align, runs:[r], text:ln.text}); p=null; prevWasHeading=true;
     } else if(mk){
-      const r=runOf(ln); r.text=mk.rest; blocks.push({list:mk.type, y:ln.y, align:ln.align, runs:[r], text:mk.rest}); p=null; prevWasHeading=false;
+      // keep the ORIGINAL marker text (1., 1.1, a), •, –) verbatim with a hanging indent
+      const r=runOf(ln); blocks.push({hang:true, y:ln.y, align:ln.align, runs:[r], text:ln.text}); p=null; prevWasHeading=false;
     } else {
       const startNew = p===null || prevWasHeading || gap > prevSize*1.9;
       if(startNew){ p={y:ln.y, align:ln.align, runs:[runOf(ln)], text:ln.text}; blocks.push(p); }
@@ -978,6 +1033,7 @@ function buildWordDoc(model, opts){
   const runHtml=(r)=>{
     let s='';
     if(r.family && r.size){ s+=`font-family:'${esc(r.family)}',sans-serif;font-size:${r.size}pt;`; if(r.bold)s+='font-weight:bold;'; if(r.italic)s+='font-style:italic;'; }
+    if(r.underline) s+='text-decoration:underline;';
     if(okColor(r.color)) s+=`color:${r.color};`;
     let h=`<span${s?` style="${s}"`:''}>${esc(r.text)}</span>`;
     if(r.link) h=`<a href="${esc(r.link)}">${h}</a>`;
@@ -993,6 +1049,10 @@ function buildWordDoc(model, opts){
     while(idx<blocks.length){
       const b=blocks[idx];
       const pb = (breakFirst && idx===0) ? 'page-break-before:always;' : '';
+      if(b.type==='rule'){
+        parts.push(`<p style="${pb}margin:5pt 0;border-top:1px solid #4a4a4a;height:0;line-height:0">&nbsp;</p>`);
+        idx++; continue;
+      }
       if(b.type==='image'){
         const w=b.wpt?`width:${Math.round(b.wpt)}pt;`:'';
         parts.push(`<p style="${pb}text-align:center;margin:8pt 0"><img src="${b.dataUrl}" style="${w}max-width:100%"></p>`);
@@ -1003,15 +1063,10 @@ function buildWordDoc(model, opts){
         parts.push(`<table class="t" style="${pb}"><tbody>${rows}</tbody></table>`);
         idx++; continue;
       }
-      if(b.list){
-        const tag=b.list; const group=[]; let j=idx;
-        while(j<blocks.length && blocks[j].list===tag){ group.push(blocks[j]); j++; }
-        parts.push(`<${tag} style="${pb}margin:6pt 0 6pt 22pt">`+group.map(it=>`<li style="${alignCss(it)}">${runsHtml(it.runs)}</li>`).join('')+`</${tag}>`);
-        idx=j; continue;
-      }
-      // heading / paragraph (run-based)
+      // heading / paragraph / list item (run-based)
       let base=pb+alignCss(b);
       if(b.heading){ base+='margin:14pt 0 6pt;'; }
+      if(b.hang){ base+='margin-left:24pt;text-indent:-20pt;'; }   // keep the literal marker, hanging indent
       const inner=runsHtml(b.runs) || esc(b.text||'');
       parts.push(`<p${base?` style="${base}"`:''}>${inner}</p>`);
       idx++;
