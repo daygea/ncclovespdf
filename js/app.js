@@ -31,7 +31,7 @@ if (window.pdfjsLib) {
    the real protection is the password check in the backend, which
    refuses to register a certificate without the correct password.
    ============================================================ */
-var GATE = { passHash: '2fa9df2fe61de377c7396f534151d7b16e7e61f3b5398d04133e19a7d8333d49' };
+var GATE = { passHash: 'd6f59d9ec159864203f3401be624ffcd3ba75190465b9e44be504aae36ef7d34' };
 var GATE_KEY='ncc_gen_ok';
 async function sha256Hex(str){
   const buf=await crypto.subtle.digest('SHA-256', new TextEncoder().encode(String(str)));
@@ -694,14 +694,43 @@ async function rasterize(pageObj, scale, quality){
 async function extractParagraphs(page, detectHead){
   const vp=page.getViewport({scale:1});
   const tc=await page.getTextContent();
+  const styles=tc.styles||{};
   const items=[];
   for(const it of tc.items){
     if(typeof it.str!=='string' || it.str==='') continue;
     const m=pdfjsLib.Util.transform(vp.transform, it.transform);
     const size=Math.hypot(m[2],m[3]) || 10;
-    items.push({x:m[4], y:m[5], size, str:it.str, width:(it.width||0)});
+    const st=styles[it.fontName]||{};
+    const fam=st.fontFamily||'sans-serif';
+    const famL=fam.toLowerCase();
+    const bold=/bold|black|heavy|semibold|\bsb\b/.test(famL);
+    const italic=/italic|oblique/.test(famL);
+    items.push({x:m[4], y:m[5], size, str:it.str, width:(it.width||0), family:normFamily(fam), bold, italic});
   }
   return reconstructParagraphs(items, detectHead);
+}
+/* Map a pdf.js font-family string to a Word-friendly font name. */
+function normFamily(fam){
+  let f=String(fam||'').replace(/["']/g,'').split(',')[0].trim();
+  const l=f.toLowerCase();
+  // strip weight/style words so "TimesNewRoman-Bold" -> "TimesNewRoman"
+  const cleaned=f.replace(/[-_ ]?(bold|italic|oblique|black|heavy|semibold|regular|medium|light|mt|ps)$/ig,'').trim();
+  if(/times|georgia|garamond|minion|roman|serif/.test(l) && !/sans/.test(l)) return 'Times New Roman';
+  if(/courier|consolas|mono/.test(l)) return 'Courier New';
+  if(/calibri/.test(l)) return 'Calibri';
+  if(/arial|helvetica|segoe|verdana|tahoma|sans/.test(l)) return 'Arial';
+  return (/[_\d]/.test(cleaned) || cleaned.length<2) ? 'Calibri' : cleaned;
+}
+/* dominant style among items, weighted by text length */
+function domStyle(items){
+  const tally={};
+  for(const it of items){
+    const key=it.family+'|'+Math.round(it.size*2)/2+'|'+(it.bold?1:0)+'|'+(it.italic?1:0);
+    tally[key]=(tally[key]||0)+(it.str.length||1);
+  }
+  let best=null,bestN=-1; for(const k in tally){ if(tally[k]>bestN){bestN=tally[k];best=k;} }
+  const [family,size,bold,italic]=(best||'Calibri|11|0|0').split('|');
+  return {family, size:parseFloat(size), bold:bold==='1', italic:italic==='1'};
 }
 
 /* Pure reconstruction: items [{x,y,size,str,width}] -> [{text,heading}].
@@ -718,7 +747,7 @@ function reconstructParagraphs(items, detectHead){
     else { cur={y:it.y, size:it.size, items:[it]}; lines.push(cur); }
   }
 
-  // build text + dominant size for each line
+  // build text + dominant size/style for each line
   const built=[];
   for(const ln of lines){
     ln.items.sort((a,b)=>a.x-b.x);
@@ -732,7 +761,7 @@ function reconstructParagraphs(items, detectHead){
       text+=it.str; prevRight=it.x+it.width;
     }
     text=text.replace(/\s+/g,' ').trim();
-    if(text) built.push({y:ln.y, size:maxSize, text});
+    if(text) built.push({y:ln.y, size:maxSize, text, style:domStyle(ln.items)});
   }
   if(!built.length) return [];
 
@@ -745,11 +774,12 @@ function reconstructParagraphs(items, detectHead){
   for(const ln of built){
     const heading = detectHead && ln.size >= median*1.35 && ln.text.length < 120;
     const gap = prevY===null ? 0 : (ln.y - prevY);
+    const s=ln.style;
     if(heading){
-      paras.push({text:ln.text, heading:true}); p=null; prevWasHeading=true;
+      paras.push({text:ln.text, heading:true, family:s.family, size:s.size, bold:s.bold, italic:s.italic}); p=null; prevWasHeading=true;
     } else {
       const startNew = p===null || prevWasHeading || gap > prevSize*1.9;
-      if(startNew){ p={text:ln.text, heading:false}; paras.push(p); }
+      if(startNew){ p={text:ln.text, heading:false, family:s.family, size:s.size, bold:s.bold, italic:s.italic}; paras.push(p); }
       else { p.text += ' ' + ln.text; }
       prevWasHeading=false;
     }
@@ -768,8 +798,17 @@ function buildWordDoc(model, opts){
     const breakFirst = pi>0 && opts.pageBreak;
     if(!paras.length){ parts.push('<p'+(breakFirst?' class="pb"':'')+'>&nbsp;</p>'); return; }
     paras.forEach((p,idx)=>{
-      const cls=[]; if(p.heading) cls.push('h'); if(breakFirst && idx===0) cls.push('pb');
-      parts.push(`<p${cls.length?' class="'+cls.join(' ')+'"':''}>${esc(p.text)}</p>`);
+      const cls=[]; if(breakFirst && idx===0) cls.push('pb');
+      // if the paragraph carries real font info from the PDF, honour it;
+      // otherwise fall back to the heading class / body default.
+      let style='';
+      if(p.family && p.size){
+        style=`font-family:'${esc(p.family)}',sans-serif;font-size:${p.size}pt;`;
+        if(p.bold) style+='font-weight:bold;';
+        if(p.italic) style+='font-style:italic;';
+      } else if(p.heading){ cls.push('h'); }
+      const attr=(cls.length?` class="${cls.join(' ')}"`:'')+(style?` style="${style}"`:'');
+      parts.push(`<p${attr}>${esc(p.text)}</p>`);
     });
   });
   const html=`<!DOCTYPE html>
