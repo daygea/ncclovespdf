@@ -31,7 +31,7 @@ if (window.pdfjsLib) {
    the real protection is the password check in the backend, which
    refuses to register a certificate without the correct password.
    ============================================================ */
-var GATE = { passHash: 'd6f59d9ec159864203f3401be624ffcd3ba75190465b9e44be504aae36ef7d34' };
+var GATE = { passHash: '79017d2f7e19fb0dbf646bea47bb5ed2691740fc7ffef3ef42a5a3528523a944' };
 var GATE_KEY='ncc_gen_ok';
 async function sha256Hex(str){
   const buf=await crypto.subtle.digest('SHA-256', new TextEncoder().encode(String(str)));
