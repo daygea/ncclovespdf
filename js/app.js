@@ -615,29 +615,53 @@ function buildOptions(t){
     case 'word':
       t.features={reorder:true,rotate:false,remove:true,select:false};
       o.innerHTML=`<h3>PDF to Word</h3>
-        <p class="hint">Pulls the text out of your PDF into an editable Word document. Works best on text-based PDFs (reports, letters, contracts). Scanned or image-only PDFs have no text layer to read — those need OCR.</p>
-        <div class="field"><label><input type="checkbox" id="wHead" checked> Detect headings (larger text becomes bold)</label></div>
-        <div class="field"><label><input type="checkbox" id="wBreak"> Start each PDF page on a new Word page (off = continuous flow)</label></div>
+        <p class="hint">Choose how you want the Word file. <b>Exact copy</b> looks identical to the PDF; <b>Editable text</b> lets you edit but won’t match the layout exactly.</p>
+        <div class="field"><label class="rlabel"><input type="radio" name="wmode" value="exact" checked> <b>Exact copy</b> — the Word document looks identical to the PDF (each page placed as an image). Best for accuracy. Text is <i>not</i> editable.</label></div>
+        <div class="field"><label class="rlabel"><input type="radio" name="wmode" value="text"> <b>Editable text</b> — pulls the text out so you can edit it. Layout is approximate. Needs a text-based PDF (not a scan).</label></div>
+        <div id="wTextOpts" style="display:none;padding-left:6px;border-left:2px solid var(--line);margin:2px 0 2px 4px">
+          <div class="field"><label><input type="checkbox" id="wHead" checked> Detect headings (larger text becomes bold)</label></div>
+          <div class="field"><label><input type="checkbox" id="wBreak"> Start each PDF page on a new Word page (off = continuous flow)</label></div>
+          <div class="field"><label><input type="checkbox" id="wRich"> Also try colour &amp; images (experimental — may be imperfect)</label></div>
+        </div>
         ${proc('Convert to Word')}`;
+      setTimeout(()=>{ document.querySelectorAll('input[name=wmode]').forEach(r=>r.onchange=()=>{
+        const m=document.querySelector('input[name=wmode]:checked').value;
+        document.getElementById('wTextOpts').style.display = m==='text'?'block':'none';
+      }); },0);
       go(async()=>{
+        const mode=(document.querySelector('input[name=wmode]:checked')||{}).value||'exact';
+        if(mode==='exact'){
+          const imgs=[];
+          for(const p of S.pages){
+            const pdf=await getDoc(p.file);
+            const page=await pdf.getPage(p.pageIndex+1);
+            imgs.push(await renderPageToImage(page, 2));
+          }
+          if(!imgs.length){ alert('No pages to convert.'); return; }
+          const blob=buildWordFromImages(imgs);
+          finish([blob], `Created an exact-copy Word document from ${imgs.length} page(s). It looks identical to the PDF; the text is not editable.`);
+          return;
+        }
+        // editable text
         const detectHead=document.getElementById('wHead').checked;
         const pageBreak=document.getElementById('wBreak').checked;
+        const rich=document.getElementById('wRich').checked;
         const model=[]; let totalChars=0;
         for(const p of S.pages){
           const pdf=await getDoc(p.file);
           const page=await pdf.getPage(p.pageIndex+1);
           let paras;
-          try{ paras=await extractPageBlocks(page, detectHead); }
-          catch(e){ console.error(e); paras=await extractParagraphs(page, detectHead); }
+          if(rich){ try{ paras=await extractPageBlocks(page, detectHead); }catch(e){ console.error(e); paras=await extractParagraphs(page, detectHead); } }
+          else paras=await extractParagraphs(page, detectHead);
           paras.forEach(x=>{ if(x.text) totalChars+=x.text.length; });
           model.push(paras);
         }
         if(totalChars < 5){
-          alert('No selectable text was found in this PDF.\n\nIt looks like a scanned or image-only document, so there is no text layer to convert. Turning that into Word needs OCR, which isn’t available yet.');
+          alert('No selectable text was found in this PDF.\n\nIt looks like a scanned or image-only document, so there is no text layer to convert. Use “Exact copy” to get the pages as-is, or run OCR first.');
           return;
         }
         const blob=buildWordDoc(model,{pageBreak});
-        finish([blob], `Extracted text from ${S.pages.length} page(s) into an editable Word document.`);
+        finish([blob], `Extracted editable text from ${S.pages.length} page(s). Layout is approximate — use “Exact copy” if you need it to match the PDF.`);
       });
       break;
   }
@@ -709,7 +733,42 @@ async function extractParagraphs(page, detectHead){
     const italic=/italic|oblique/.test(famL);
     items.push({x:m[4], y:m[5], size, str:it.str, width:(it.width||0), family:normFamily(fam), bold, italic});
   }
-  return reconstructParagraphs(items, detectHead);
+  return reconstructParagraphs(items, detectHead, {pageWidth:vp.width});
+}
+
+/* Exact-copy converter: render each page to an image and place it in the Word
+   file, one page per Word page. The result is visually identical to the PDF.
+   (Text is not editable — it is a picture of the page.) */
+function buildWordFromImages(imgs){
+  const first=imgs[0]||{w:595,h:842};
+  const body=imgs.map((im,i)=>{
+    const br = i>0 ? 'page-break-before:always;' : '';
+    return `<div style="${br}"><img src="${im.dataUrl}" style="width:${Math.round(im.w)}pt;height:${Math.round(im.h)}pt;display:block"></div>`;
+  }).join('\n');
+  const html=`<!DOCTYPE html>
+<html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:w="urn:schemas-microsoft-com:office:word" xmlns="http://www.w3.org/TR/REC-html40">
+<head><meta charset="utf-8"><title>Converted document</title>
+<!--[if gte mso 9]><xml><w:WordDocument><w:View>Print</w:View></w:WordDocument></xml><![endif]-->
+<style>
+@page Section1 { size:${Math.round(first.w)}pt ${Math.round(first.h)}pt; margin:0; }
+div.Section1 { page:Section1; }
+body{ margin:0; } img{ border:0; }
+</style></head>
+<body><div class="Section1">
+${body}
+</div></body></html>`;
+  const blob=new Blob(['\ufeff'+html],{type:'application/msword'});
+  blob.dlName='converted.doc'; blob.sizeLabel=fmtSize(blob.size);
+  return blob;
+}
+/* render one PDF page to a JPEG data URL at the given scale (~144dpi at 2x) */
+async function renderPageToImage(page, scale){
+  const vp=page.getViewport({scale});
+  const canvas=document.createElement('canvas'); canvas.width=Math.ceil(vp.width); canvas.height=Math.ceil(vp.height);
+  const ctx=canvas.getContext('2d'); ctx.fillStyle='#fff'; ctx.fillRect(0,0,canvas.width,canvas.height);
+  await page.render({canvasContext:ctx, viewport:vp}).promise;
+  const base=page.getViewport({scale:1});
+  return { dataUrl:canvas.toDataURL('image/jpeg',0.92), w:base.width, h:base.height };
 }
 
 /* Rich extraction: text + true font + colour (sampled from a render) + link

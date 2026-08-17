@@ -438,3 +438,7 @@ footer a:hover{color:#fff}
 @media (max-width:760px){
   .scan-wrap{grid-template-columns:1fr}
 }
+
+/* radio labels in tool options */
+.rlabel{ display:flex; gap:8px; align-items:flex-start; line-height:1.4; font-weight:500; }
+.rlabel input{ margin-top:3px; }
