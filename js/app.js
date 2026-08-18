@@ -651,8 +651,8 @@ function buildOptions(t){
           const pdf=await getDoc(p.file);
           const page=await pdf.getPage(p.pageIndex+1);
           let paras;
-          if(rich){ try{ paras=await extractPageBlocks(page, detectHead); }catch(e){ console.error(e); paras=await extractParagraphs(page, detectHead); } }
-          else paras=await extractParagraphs(page, detectHead);
+          if(rich){ try{ paras=await extractPageBlocks(page, detectHead); }catch(e){ console.error(e); paras=await extractEditable(page, detectHead); } }
+          else { try{ paras=await extractEditable(page, detectHead); }catch(e){ console.error(e); paras=await extractParagraphs(page, detectHead); } }
           paras.forEach(x=>{ if(x.text) totalChars+=x.text.length; });
           model.push(paras);
         }
@@ -734,6 +734,109 @@ async function extractParagraphs(page, detectHead){
     items.push({x:m[4], y:m[5], size, str:it.str, width:(it.width||0), family:normFamily(fam), bold, italic});
   }
   return reconstructParagraphs(items, detectHead, {pageWidth:vp.width});
+}
+
+/* ---- Ruled-table reconstruction ------------------------------------------
+   Read the actual grid lines and drop each text item into the cell whose
+   rectangle contains it. This is what makes multi-line cells convert correctly
+   (everything inside a cell's box stays in that cell), while staying editable.
+   Works for tables that have visible ruling; borderless tables fall back to
+   the spacing heuristic. --------------------------------------------------- */
+function clusterVals(vals, tol){
+  vals=vals.slice().sort((a,b)=>a-b); const out=[];
+  for(const v of vals){ const last=out[out.length-1];
+    if(last && Math.abs(v-last.v)<=tol){ last.xs.push(v); last.v=last.xs.reduce((a,b)=>a+b,0)/last.xs.length; }
+    else out.push({v, xs:[v]}); }
+  return out.map(o=>Math.round(o.v*10)/10);
+}
+async function extractRules(page, vp){
+  const H=[], V=[]; const OPS=pdfjsLib.OPS; if(!OPS) return {h:H,v:V};
+  const opl=await page.getOperatorList();
+  let ctm=[1,0,0,1,0,0]; const stack=[];
+  const dev=(x,y)=>{ const m=pdfjsLib.Util.transform(vp.transform, ctm); return {x:m[0]*x+m[2]*y+m[4], y:m[1]*x+m[3]*y+m[5]}; };
+  const seg=(ax,ay,bx,by)=>{ const A=dev(ax,ay), B=dev(bx,by);
+    if(Math.abs(A.y-B.y)<2.5 && Math.abs(A.x-B.x)>=10) H.push({x0:Math.min(A.x,B.x), x1:Math.max(A.x,B.x), y:(A.y+B.y)/2});
+    else if(Math.abs(A.x-B.x)<2.5 && Math.abs(A.y-B.y)>=10) V.push({y0:Math.min(A.y,B.y), y1:Math.max(A.y,B.y), x:(A.x+B.x)/2});
+  };
+  const rect=(x,y,w,h)=>{ seg(x,y,x+w,y); seg(x,y+h,x+w,y+h); seg(x,y,x,y+h); seg(x+w,y,x+w,y+h); };
+  for(let i=0;i<opl.fnArray.length;i++){
+    const fn=opl.fnArray[i], a=opl.argsArray[i];
+    if(fn===OPS.save) stack.push(ctm.slice());
+    else if(fn===OPS.restore) ctm=stack.pop()||[1,0,0,1,0,0];
+    else if(fn===OPS.transform) ctm=pdfjsLib.Util.transform(ctm,a);
+    else if(fn===OPS.rectangle){ rect(a[0],a[1],a[2],a[3]); }
+    else if(fn===OPS.constructPath){
+      try{ const ops=a[0], co=a[1]; let ci=0,px=0,py=0,sx=0,sy=0;
+        for(const o of ops){
+          if(o===OPS.moveTo){ px=co[ci++]; py=co[ci++]; sx=px; sy=py; }
+          else if(o===OPS.lineTo){ const nx=co[ci++],ny=co[ci++]; seg(px,py,nx,ny); px=nx; py=ny; }
+          else if(o===OPS.curveTo){ ci+=6; px=co[ci-2]; py=co[ci-1]; }
+          else if(o===OPS.curveTo2){ ci+=4; px=co[ci-2]; py=co[ci-1]; }
+          else if(o===OPS.curveTo3){ ci+=4; px=co[ci-2]; py=co[ci-1]; }
+          else if(o===OPS.rectangle){ const x=co[ci++],y=co[ci++],w=co[ci++],h=co[ci++]; rect(x,y,w,h); px=x;py=y; }
+          else if(o===OPS.closePath){ seg(px,py,sx,sy); px=sx;py=sy; }
+        }
+      }catch(e){}
+    }
+  }
+  return {h:H, v:V};
+}
+function buildRuledTables(H, V, items){
+  const res={ blocks:[], remaining:items.slice() };
+  if(H.length<2 || V.length<2) return res;
+  const tol=3.5;
+  // keep only long-enough lines, then cluster into grid boundaries
+  const colXs=clusterVals(V.map(l=>l.x), tol);
+  const rowYs=clusterVals(H.map(l=>l.y), tol);
+  if(colXs.length<3 || rowYs.length<2) return res;   // need >=2 columns and >=1 row band bounded by lines
+  const x0=colXs[0], x1=colXs[colXs.length-1], y0=rowYs[0], y1=rowYs[rowYs.length-1];
+  if(x1-x0<60 || y1-y0<16) return res;
+  const nrows=rowYs.length-1, ncols=colXs.length-1;
+  const cells=Array.from({length:nrows},()=>Array.from({length:ncols},()=>[]));
+  const remaining=[]; let inside=0;
+  for(const it of items){
+    const cx=it.x+(it.width||0)/2, cy=it.y;
+    if(cx>=x0-tol && cx<=x1+tol && cy>=y0-tol && cy<=y1+tol){
+      let r=-1; for(let i=0;i<nrows;i++){ if(cy>rowYs[i]-tol && cy<rowYs[i+1]+tol){ r=i; break; } }
+      let c=-1; for(let j=0;j<ncols;j++){ if(cx>colXs[j]-tol && cx<colXs[j+1]+tol){ c=j; break; } }
+      if(r>=0 && c>=0){ cells[r][c].push(it); inside++; continue; }
+    }
+    remaining.push(it);
+  }
+  if(inside<4) return res;               // not really a populated table
+  const rows=cells.map(row=>row.map(ci=>{
+    if(!ci.length) return '';
+    ci.sort((a,b)=> a.y-b.y || a.x-b.x);
+    const lines=[]; let cur=null;
+    for(const it of ci){ if(cur && Math.abs(it.y-cur.y)<=Math.max(cur.size,it.size)*0.6) cur.items.push(it);
+      else { cur={y:it.y, size:it.size, items:[it]}; lines.push(cur); } }
+    return lines.map(ln=>{ ln.items.sort((a,b)=>a.x-b.x);
+      let s='',pr=null; for(const it of ln.items){ if(pr!==null && it.x-pr>it.size*0.3 && !/\s$/.test(s)) s+=' '; s+=it.str; pr=it.x+(it.width||0); }
+      return s.replace(/\s+/g,' ').trim();
+    }).filter(Boolean).join('\n');
+  }));
+  res.blocks.push({type:'table', y:y0, ruled:true, rows});
+  res.remaining=remaining;
+  return res;
+}
+/* Editable extractor: ruled tables (multi-line cells) + text flow. */
+async function extractEditable(page, detectHead){
+  const vp=page.getViewport({scale:1});
+  const tc=await page.getTextContent(); const styles=tc.styles||{};
+  const items=[];
+  for(const it of tc.items){
+    if(typeof it.str!=='string' || it.str==='') continue;
+    const m=pdfjsLib.Util.transform(vp.transform, it.transform);
+    const size=Math.hypot(m[2],m[3])||10;
+    const st=styles[it.fontName]||{}; const fam=st.fontFamily||'sans-serif'; const famL=fam.toLowerCase();
+    items.push({x:m[4], y:m[5], size, str:it.str, width:(it.width||0), family:normFamily(fam), bold:/bold|black|heavy|semibold/.test(famL), italic:/italic|oblique/.test(famL)});
+  }
+  let tableBlocks=[], remaining=items;
+  try{ const {h,v}=await extractRules(page, vp); const rt=buildRuledTables(h,v,items); if(rt.blocks.length){ tableBlocks=rt.blocks; remaining=rt.remaining; } }
+  catch(e){ console.error(e); }
+  let blocks=reconstructParagraphs(remaining, detectHead, {pageWidth:vp.width});
+  if(tableBlocks.length){ blocks=blocks.concat(tableBlocks).sort((a,b)=>(a.y||0)-(b.y||0)); }
+  return blocks;
 }
 
 /* Exact-copy converter: render each page to an image and place it in the Word
@@ -1126,7 +1229,11 @@ function buildWordDoc(model, opts){
         idx++; continue;
       }
       if(b.type==='table'){
-        const rows=b.rows.map(r=>'<tr>'+r.map(c=>`<td>${esc(c||'')}</td>`).join('')+'</tr>').join('');
+        const ruled=b.ruled;
+        const rows=b.rows.map((r,ri)=>'<tr>'+r.map(c=>{
+          const cell=esc(c||'').replace(/\n/g,'<br>');
+          return (ruled && ri===0) ? `<td style="font-weight:bold">${cell}</td>` : `<td>${cell}</td>`;
+        }).join('')+'</tr>').join('');
         parts.push(`<table class="t" style="${pb}"><tbody>${rows}</tbody></table>`);
         idx++; continue;
       }
@@ -1150,7 +1257,7 @@ body{ font-family:'Calibri','Segoe UI',Arial,sans-serif; font-size:11pt; color:#
 p{ margin:0 0 8pt; }
 img{ height:auto; }
 table.t{ border-collapse:collapse; margin:8pt 0; width:auto; }
-table.t td{ border:1px solid #808080; padding:3pt 6pt; vertical-align:top; font-size:10.5pt; }
+table.t td{ border:1px solid #595959; padding:3pt 6pt; vertical-align:top; font-size:10.5pt; }
 </style></head>
 <body><div class="Section1">
 ${parts.join('\n')}
