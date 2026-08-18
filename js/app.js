@@ -781,16 +781,33 @@ async function extractRules(page, vp){
   }
   return {h:H, v:V};
 }
+function unionLen(intervals){
+  if(!intervals.length) return 0;
+  intervals.sort((a,b)=>a[0]-b[0]);
+  let len=0, s=intervals[0][0], e=intervals[0][1];
+  for(let i=1;i<intervals.length;i++){ const [a,b]=intervals[i];
+    if(a>e){ len+=e-s; s=a; e=b; } else if(b>e) e=b; }
+  return len+(e-s);
+}
 function buildRuledTables(H, V, items){
   const res={ blocks:[], remaining:items.slice() };
   if(H.length<2 || V.length<2) return res;
   const tol=3.5;
-  // keep only long-enough lines, then cluster into grid boundaries
-  const colXs=clusterVals(V.map(l=>l.x), tol);
-  const rowYs=clusterVals(H.map(l=>l.y), tol);
-  if(colXs.length<3 || rowYs.length<2) return res;   // need >=2 columns and >=1 row band bounded by lines
+  const allX=clusterVals(V.map(l=>l.x), tol), allY=clusterVals(H.map(l=>l.y), tol);
+  if(allX.length<2 || allY.length<2) return res;
+  const rw=allX[allX.length-1]-allX[0], rh=allY[allY.length-1]-allY[0];
+  if(rw<80 || rh<24) return res;
+  // REAL separators: cluster segments sharing an x (or y) and require their COMBINED
+  // coverage to span most of the table. This accepts tables drawn cell-by-cell (many
+  // short edges add up to a full-height line) while rejecting logos/decorations
+  // (whose edges at any given x/y cover only a little of the region).
+  const colXs=clusterVals(V.map(l=>l.x), tol).filter(cx=>
+    unionLen(V.filter(l=>Math.abs(l.x-cx)<=tol).map(l=>[Math.min(l.y0,l.y1),Math.max(l.y0,l.y1)])) >= rh*0.5);
+  const rowYs=clusterVals(H.map(l=>l.y), tol).filter(cy=>
+    unionLen(H.filter(l=>Math.abs(l.y-cy)<=tol).map(l=>[Math.min(l.x0,l.x1),Math.max(l.x0,l.x1)])) >= rw*0.5);
+  if(colXs.length<3 || rowYs.length<3) return res;   // real grid: >=2 columns AND >=2 rows
   const x0=colXs[0], x1=colXs[colXs.length-1], y0=rowYs[0], y1=rowYs[rowYs.length-1];
-  if(x1-x0<60 || y1-y0<16) return res;
+  if(x1-x0<80 || y1-y0<24) return res;
   const nrows=rowYs.length-1, ncols=colXs.length-1;
   const cells=Array.from({length:nrows},()=>Array.from({length:ncols},()=>[]));
   const remaining=[]; let inside=0;
@@ -804,6 +821,11 @@ function buildRuledTables(H, V, items){
     remaining.push(it);
   }
   if(inside<4) return res;               // not really a populated table
+  // distribution sanity: a real table fills >=2 rows AND >=2 columns. A false
+  // grid over a letter dumps everything into one band -> reject it.
+  const rowsUsed=cells.filter(row=>row.some(c=>c.length)).length;
+  const colsUsed=Array.from({length:ncols},(_,j)=>cells.some(row=>row[j].length)).filter(Boolean).length;
+  if(rowsUsed<2 || colsUsed<2) return res;
   const rows=cells.map(row=>row.map(ci=>{
     if(!ci.length) return '';
     ci.sort((a,b)=> a.y-b.y || a.x-b.x);
@@ -1240,7 +1262,7 @@ function orderBlocks(blocks, pw){
    >=2 rows. Returns {block, end} or null. Text-based tables only. */
 function detectTableRun(built, start, median){
   let j=start; while(j<built.length && built[j].segs.length>=2) j++;
-  if(j-start < 2) return null;
+  if(j-start < 3) return null;   // borderless tables need >=3 aligned rows (avoids tabling label:value pairs)
   const runLines=built.slice(start,j);
   const tol=Math.max(median,8)*1.6;
   const xs=[]; runLines.forEach(l=>l.segs.forEach(s=>xs.push(s.x))); xs.sort((a,b)=>a-b);
