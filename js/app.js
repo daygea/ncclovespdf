@@ -733,7 +733,7 @@ async function extractParagraphs(page, detectHead){
     const italic=/italic|oblique/.test(famL);
     items.push({x:m[4], y:m[5], size, str:it.str, width:(it.width||0), family:normFamily(fam), bold, italic});
   }
-  return reconstructParagraphs(items, detectHead, {pageWidth:vp.width});
+  return orderBlocks(reconstructParagraphs(items, detectHead, {pageWidth:vp.width}), vp.width);
 }
 
 /* ---- Ruled-table reconstruction ------------------------------------------
@@ -815,7 +815,7 @@ function buildRuledTables(H, V, items){
       return s.replace(/\s+/g,' ').trim();
     }).filter(Boolean).join('\n');
   }));
-  res.blocks.push({type:'table', y:y0, ruled:true, rows});
+  res.blocks.push({type:'table', y:y0, x0:x0, x1:x1, ruled:true, rows});
   res.remaining=remaining;
   return res;
 }
@@ -834,9 +834,9 @@ async function extractEditable(page, detectHead){
   let tableBlocks=[], remaining=items;
   try{ const {h,v}=await extractRules(page, vp); const rt=buildRuledTables(h,v,items); if(rt.blocks.length){ tableBlocks=rt.blocks; remaining=rt.remaining; } }
   catch(e){ console.error(e); }
-  let blocks=reconstructParagraphs(remaining, detectHead, {pageWidth:vp.width});
-  if(tableBlocks.length){ blocks=blocks.concat(tableBlocks).sort((a,b)=>(a.y||0)-(b.y||0)); }
-  return blocks;
+  let blocks=reconstructFlow(remaining, detectHead, vp.width);
+  if(tableBlocks.length) blocks=blocks.concat(tableBlocks);
+  return orderBlocks(blocks, vp.width);
 }
 
 /* Exact-copy converter: render each page to an image and place it in the Word
@@ -954,8 +954,8 @@ async function extractPageBlocks(page, detectHead){
   const extra=[];
   try{ const imgs=await extractImages(page, vp); imgs.forEach(im=>extra.push(im)); }catch(e){}
   ruleBlocks.forEach(r=>extra.push(r));
-  if(extra.length){ blocks=blocks.concat(extra); blocks.sort((a,b)=>(a.y||0)-(b.y||0)); }
-  return blocks;
+  if(extra.length){ blocks=blocks.concat(extra); }
+  return orderBlocks(blocks, pageWidth);
 }
 /* average the ink pixels inside a glyph box to estimate text colour */
 function sampleColor(ctx, it, scale){
@@ -1125,7 +1125,7 @@ function reconstructParagraphs(items, detectHead, opts){
     text=text.replace(/\s+/g,' ').trim();
     segs.forEach(s=>{ s.text=s.text.replace(/\s+/g,' ').trim(); });
     let link=null,lN=0; for(const k in linkTally){ if(linkTally[k]>lN){lN=linkTally[k];link=k;} }
-    if(text) built.push({y:ln.y, size:maxSize, text, style:domStyle(ln.items), segs:segs.filter(s=>s.text), align:lineAlign(left,right,pw), link});
+    if(text) built.push({y:ln.y, size:maxSize, text, style:domStyle(ln.items), segs:segs.filter(s=>s.text), align:lineAlign(left,right,pw), link, x0:left, x1:right});
   }
   if(!built.length) return [];
 
@@ -1144,25 +1144,95 @@ function reconstructParagraphs(items, detectHead, opts){
     const gap = prevY===null ? 0 : (ln.y - prevY);
     const mk = heading ? null : listMarker(ln.text);
     if(heading){
-      const r=runOf(ln); blocks.push({heading:true, y:ln.y, align:ln.align, runs:[r], text:ln.text}); p=null; prevWasHeading=true;
+      const r=runOf(ln); blocks.push({heading:true, y:ln.y, align:ln.align, runs:[r], text:ln.text, x0:ln.x0, x1:ln.x1}); p=null; prevWasHeading=true;
     } else if(mk){
       // keep the ORIGINAL marker text (1., 1.1, a), •, –) verbatim with a hanging indent
-      const r=runOf(ln); blocks.push({hang:true, y:ln.y, align:ln.align, runs:[r], text:ln.text}); p=null; prevWasHeading=false;
+      const r=runOf(ln); blocks.push({hang:true, y:ln.y, align:ln.align, runs:[r], text:ln.text, x0:ln.x0, x1:ln.x1}); p=null; prevWasHeading=false;
     } else {
       const startNew = p===null || prevWasHeading || gap > prevSize*1.9;
-      if(startNew){ p={y:ln.y, align:ln.align, runs:[runOf(ln)], text:ln.text}; blocks.push(p); }
+      if(startNew){ p={y:ln.y, align:ln.align, runs:[runOf(ln)], text:ln.text, x0:ln.x0, x1:ln.x1}; blocks.push(p); }
       else {
         const r=runOf(ln), last=p.runs[p.runs.length-1];
         // merge into previous run only if the styling matches; otherwise keep a distinct run
         if(last && last.family===r.family && last.size===r.size && last.bold===r.bold && last.italic===r.italic && last.color===r.color && last.link===r.link){ last.text+=' '+r.text; }
         else p.runs.push(r);
-        p.text += ' ' + r.text;
+        p.text += ' ' + r.text; p.x0=Math.min(p.x0, ln.x0); p.x1=Math.max(p.x1, ln.x1);
       }
       prevWasHeading=false;
     }
     prevY=ln.y; prevSize=ln.size; i++;
   }
+  // preserve genuine left-indentation: measure the common left margin, then indent
+  // blocks that clearly start to the right of it (but not so far that they're a column)
+  const leftMargin=Math.min(...blocks.filter(b=>b.align!=='center'&&b.align!=='right'&&b.x0!=null).map(b=>b.x0), 1e9);
+  if(isFinite(leftMargin)){
+    for(const b of blocks){
+      if(b.type||b.align==='center'||b.align==='right'||b.x0==null) continue;
+      const ind=b.x0-leftMargin;
+      if(ind>14 && ind<110) b.indent=Math.round(ind);
+    }
+  }
   return blocks;
+}
+/* Find a clear column gutter (x) or return null. A real gutter is crossed by
+   very few rows and has content on both sides in most rows — this is what keeps
+   single-column pages (where most lines cross the middle) from being split. */
+function findGutter(items, pw){
+  if(!pw || items.length<10) return null;
+  const rows={}; for(const it of items){ const k=Math.round(it.y/6); (rows[k]=rows[k]||[]).push(it); }
+  const rowList=Object.values(rows); if(rowList.length<6) return null;
+  let best=null;
+  for(let f=0.34; f<=0.66; f+=0.03){
+    const gx=pw*f; let cross=0, both=0;
+    for(const row of rowList){
+      let hasL=false,hasR=false,hasCross=false;
+      for(const it of row){ const l=it.x, r=it.x+(it.width||0); if(l<gx-6 && r>gx+6) hasCross=true; else if(r<=gx) hasL=true; else if(l>=gx) hasR=true; }
+      if(hasCross) cross++;
+      if((hasL||hasCross) && (hasR||hasCross)) {} // ignore
+      if(hasL && hasR) both++;
+    }
+    if(cross <= rowList.length*0.10 && both >= rowList.length*0.40){ if(!best || cross<best.cross) best={gx,cross}; }
+  }
+  return best ? best.gx : null;
+}
+/* Column-aware reconstruction: split items by the gutter and reconstruct each
+   side separately so columns don't merge across. Single-column -> unchanged. */
+function reconstructFlow(items, detectHead, pw){
+  const g=findGutter(items, pw);
+  if(!g) return reconstructParagraphs(items, detectHead, {pageWidth:pw});
+  const left=[], right=[], span=[];
+  for(const it of items){ const l=it.x, r=it.x+(it.width||0);
+    if(r < g-2) left.push(it); else if(l > g+2) right.push(it); else span.push(it); }
+  const out=[];
+  if(span.length) out.push(...reconstructParagraphs(span, detectHead, {pageWidth:pw}));
+  out.push(...reconstructParagraphs(left, detectHead, {pageWidth:pw}));
+  out.push(...reconstructParagraphs(right, detectHead, {pageWidth:pw}));
+  return out;
+}
+/* Reading order: default top-to-bottom, but when a page has a clear two-column
+   layout, read down the left column then the right (bounded by any full-width
+   blocks that span both columns, e.g. a title or a table). Conservative — falls
+   back to plain top-to-bottom whenever the layout isn't clearly two-column. */
+function orderBlocks(blocks, pw){
+  const sortY=arr=>arr.slice().sort((a,b)=>(a.y||0)-(b.y||0));
+  if(!pw || blocks.length<5) return sortY(blocks);
+  blocks.forEach(b=>{ if(b.x0==null)b.x0=0; if(b.x1==null)b.x1=pw; });
+  const sorted=sortY(blocks);
+  let best=null;
+  for(let f=0.38; f<=0.62; f+=0.02){
+    const split=pw*f; let L=0,R=0,S=0;
+    for(const b of sorted){ if(b.x1<split-4) L++; else if(b.x0>split+4) R++; else S++; }
+    if(L>=2 && R>=2 && (!best || S<best.S)) best={split,L,R,S};
+  }
+  if(!best) return sorted;
+  if(best.S>Math.min(best.L,best.R)) return sorted;             // too many spanning blocks -> not clean columns
+  if((best.L+best.R) < sorted.length*0.6) return sorted;         // most content isn't columnar
+  const split=best.split, out=[]; let band=[];
+  const isL=b=>b.x1<split-4, isR=b=>b.x0>split+4;
+  const flush=()=>{ if(!band.length)return; const L=band.filter(isL).sort((a,b)=>a.y-b.y); const R=band.filter(isR).sort((a,b)=>a.y-b.y); out.push(...L,...R); band=[]; };
+  for(const b of sorted){ if(!isL(b)&&!isR(b)){ flush(); out.push(b); } else band.push(b); }
+  flush();
+  return out;
 }
 
 /* Conservative table detector: a run of >=2 consecutive lines that each split
@@ -1241,6 +1311,7 @@ function buildWordDoc(model, opts){
       let base=pb+alignCss(b);
       if(b.heading){ base+='margin:14pt 0 6pt;'; }
       if(b.hang){ base+='margin-left:24pt;text-indent:-20pt;'; }   // keep the literal marker, hanging indent
+      if(b.indent && !b.hang){ base+='margin-left:'+b.indent+'pt;'; }
       const inner=runsHtml(b.runs) || esc(b.text||'');
       parts.push(`<p${base?` style="${base}"`:''}>${inner}</p>`);
       idx++;
