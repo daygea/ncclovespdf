@@ -740,19 +740,23 @@ async function extractParagraphs(page, detectHead){
    file, one page per Word page. The result is visually identical to the PDF.
    (Text is not editable — it is a picture of the page.) */
 function buildWordFromImages(imgs){
-  const first=imgs[0]||{w:595,h:842};
+  const pageW=Math.max(1,...imgs.map(im=>Math.round(im.w)));   // widest page
+  const pageH=Math.max(1,...imgs.map(im=>Math.round(im.h)));   // tallest page
+  const SLACK=6;                                               // pts of bottom slack so nothing spills to a blank page
   const body=imgs.map((im,i)=>{
     const br = i>0 ? 'page-break-before:always;' : '';
-    return `<div style="${br}"><img src="${im.dataUrl}" style="width:${Math.round(im.w)}pt;height:${Math.round(im.h)}pt;display:block"></div>`;
+    return `<div class="pg" style="${br}"><img src="${im.dataUrl}" style="width:${Math.round(im.w)}pt;height:${Math.round(im.h)}pt"></div>`;
   }).join('\n');
   const html=`<!DOCTYPE html>
 <html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:w="urn:schemas-microsoft-com:office:word" xmlns="http://www.w3.org/TR/REC-html40">
 <head><meta charset="utf-8"><title>Converted document</title>
-<!--[if gte mso 9]><xml><w:WordDocument><w:View>Print</w:View></w:WordDocument></xml><![endif]-->
+<!--[if gte mso 9]><xml><w:WordDocument><w:View>Print</w:View><w:DoNotExpandShiftReturn/></w:WordDocument></xml><![endif]-->
 <style>
-@page Section1 { size:${Math.round(first.w)}pt ${Math.round(first.h)}pt; margin:0; }
+@page Section1 { size:${pageW}pt ${pageH+SLACK}pt; margin:0pt; }
 div.Section1 { page:Section1; }
-body{ margin:0; } img{ border:0; }
+html,body{ margin:0; padding:0; }
+div.pg{ margin:0; padding:0; font-size:0; line-height:0; text-align:center; }
+div.pg img{ display:block; margin:0 auto; border:0; }
 </style></head>
 <body><div class="Section1">
 ${body}
@@ -763,11 +767,15 @@ ${body}
 }
 /* render one PDF page to a JPEG data URL at the given scale (~144dpi at 2x) */
 async function renderPageToImage(page, scale){
-  const vp=page.getViewport({scale});
+  const base=page.getViewport({scale:1});
+  let s=scale;
+  const MAXPX=3000;                                  // guard against huge pages blowing up memory/file size
+  if(base.width*s > MAXPX) s=MAXPX/base.width;
+  if(base.height*s > MAXPX) s=Math.min(s, MAXPX/base.height);
+  const vp=page.getViewport({scale:s});
   const canvas=document.createElement('canvas'); canvas.width=Math.ceil(vp.width); canvas.height=Math.ceil(vp.height);
   const ctx=canvas.getContext('2d'); ctx.fillStyle='#fff'; ctx.fillRect(0,0,canvas.width,canvas.height);
   await page.render({canvasContext:ctx, viewport:vp}).promise;
-  const base=page.getViewport({scale:1});
   return { dataUrl:canvas.toDataURL('image/jpeg',0.92), w:base.width, h:base.height };
 }
 
