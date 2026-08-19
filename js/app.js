@@ -620,8 +620,6 @@ function buildOptions(t){
         <div class="field"><label class="rlabel"><input type="radio" name="wmode" value="exact"> <b>Exact copy</b> — the Word document looks identical to the PDF (each page placed as an image). Text is <i>not</i> editable.</label></div>
         <div id="wTextOpts" style="padding-left:6px;border-left:2px solid var(--line);margin:2px 0 2px 4px">
           <div class="field"><label><input type="checkbox" id="wHead" checked> Detect headings (larger text becomes bold)</label></div>
-          <div class="field"><label><input type="checkbox" id="wBreak"> Start each PDF page on a new Word page (off = continuous flow)</label></div>
-          <div class="field"><label><input type="checkbox" id="wRich"> Also detect text colour &amp; underlines (experimental)</label></div>
         </div>
         ${proc('Convert to Word')}`;
       setTimeout(()=>{ document.querySelectorAll('input[name=wmode]').forEach(r=>r.onchange=()=>{
@@ -644,15 +642,12 @@ function buildOptions(t){
         }
         // editable text
         const detectHead=document.getElementById('wHead').checked;
-        const pageBreak=document.getElementById('wBreak').checked;
-        const rich=document.getElementById('wRich').checked;
         const model=[]; let totalChars=0;
         for(const p of S.pages){
           const pdf=await getDoc(p.file);
           const page=await pdf.getPage(p.pageIndex+1);
           let paras;
-          if(rich){ try{ paras=await extractPageBlocks(page, detectHead); }catch(e){ console.error(e); paras=await extractEditable(page, detectHead); } }
-          else { try{ paras=await extractEditable(page, detectHead); }catch(e){ console.error(e); paras=await extractParagraphs(page, detectHead); } }
+          try{ paras=await extractEditable(page, detectHead); }catch(e){ console.error(e); paras=await extractParagraphs(page, detectHead); }
           paras.forEach(x=>{ if(x.text) totalChars+=x.text.length; });
           model.push(paras);
         }
@@ -660,7 +655,7 @@ function buildOptions(t){
           alert('No selectable text was found in this PDF.\n\nIt looks like a scanned or image-only document, so there is no text layer to convert. Use “Exact copy” to get the pages as-is, or run OCR first.');
           return;
         }
-        const blob=buildWordDoc(model,{pageBreak});
+        const blob=buildWordDoc(model,{pageBreak:false});
         finish([blob], `Extracted editable text from ${S.pages.length} page(s). Layout is approximate — use “Exact copy” if you need it to match the PDF.`);
       });
       break;
