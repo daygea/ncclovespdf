@@ -615,13 +615,13 @@ function buildOptions(t){
     case 'word':
       t.features={reorder:true,rotate:false,remove:true,select:false};
       o.innerHTML=`<h3>PDF to Word</h3>
-        <p class="hint">Choose how you want the Word file. <b>Exact copy</b> looks identical to the PDF; <b>Editable text</b> lets you edit but won’t match the layout exactly.</p>
-        <div class="field"><label class="rlabel"><input type="radio" name="wmode" value="exact" checked> <b>Exact copy</b> — the Word document looks identical to the PDF (each page placed as an image). Best for accuracy. Text is <i>not</i> editable.</label></div>
-        <div class="field"><label class="rlabel"><input type="radio" name="wmode" value="text"> <b>Editable text</b> — pulls the text out so you can edit it. Layout is approximate. Needs a text-based PDF (not a scan).</label></div>
-        <div id="wTextOpts" style="display:none;padding-left:6px;border-left:2px solid var(--line);margin:2px 0 2px 4px">
+        <p class="hint"><b>Editable text</b> pulls the words (and tables and images) into a document you can edit. <b>Exact copy</b> makes it look identical to the PDF but as a picture you can’t edit.</p>
+        <div class="field"><label class="rlabel"><input type="radio" name="wmode" value="text" checked> <b>Editable text</b> — pulls out text, tables and images so you can edit them. Layout is approximate. Needs a text-based PDF (not a scan).</label></div>
+        <div class="field"><label class="rlabel"><input type="radio" name="wmode" value="exact"> <b>Exact copy</b> — the Word document looks identical to the PDF (each page placed as an image). Text is <i>not</i> editable.</label></div>
+        <div id="wTextOpts" style="padding-left:6px;border-left:2px solid var(--line);margin:2px 0 2px 4px">
           <div class="field"><label><input type="checkbox" id="wHead" checked> Detect headings (larger text becomes bold)</label></div>
           <div class="field"><label><input type="checkbox" id="wBreak"> Start each PDF page on a new Word page (off = continuous flow)</label></div>
-          <div class="field"><label><input type="checkbox" id="wRich"> Also try colour &amp; images (experimental — may be imperfect)</label></div>
+          <div class="field"><label><input type="checkbox" id="wRich"> Also detect text colour &amp; underlines (experimental)</label></div>
         </div>
         ${proc('Convert to Word')}`;
       setTimeout(()=>{ document.querySelectorAll('input[name=wmode]').forEach(r=>r.onchange=()=>{
@@ -629,7 +629,7 @@ function buildOptions(t){
         document.getElementById('wTextOpts').style.display = m==='text'?'block':'none';
       }); },0);
       go(async()=>{
-        const mode=(document.querySelector('input[name=wmode]:checked')||{}).value||'exact';
+        const mode=(document.querySelector('input[name=wmode]:checked')||{}).value||'text';
         if(mode==='exact'){
           const imgs=[];
           for(const p of S.pages){
@@ -781,64 +781,67 @@ async function extractRules(page, vp){
   }
   return {h:H, v:V};
 }
-function unionLen(intervals){
-  if(!intervals.length) return 0;
-  intervals.sort((a,b)=>a[0]-b[0]);
-  let len=0, s=intervals[0][0], e=intervals[0][1];
-  for(let i=1;i<intervals.length;i++){ const [a,b]=intervals[i];
-    if(a>e){ len+=e-s; s=a; e=b; } else if(b>e) e=b; }
-  return len+(e-s);
+function cellText(ci){
+  if(!ci.length) return '';
+  ci.sort((a,b)=> a.y-b.y || a.x-b.x);
+  const lines=[]; let cur=null;
+  for(const it of ci){ if(cur && Math.abs(it.y-cur.y)<=Math.max(cur.size,it.size)*0.6) cur.items.push(it);
+    else { cur={y:it.y, size:it.size, items:[it]}; lines.push(cur); } }
+  return lines.map(ln=>{ ln.items.sort((a,b)=>a.x-b.x);
+    let s='',pr=null; for(const it of ln.items){ if(pr!==null && it.x-pr>it.size*0.3 && !/\s$/.test(s)) s+=' '; s+=it.str; pr=it.x+(it.width||0); }
+    return s.replace(/\s+/g,' ').trim();
+  }).filter(Boolean).join('\n');
 }
+/* Ruled tables via LINE CONNECTIVITY. Group grid lines into connected regions
+   (a table = lines that cross each other) so multiple tables on one page are
+   detected separately, and stray graphics (logos) form their own tiny regions
+   that fail the sanity checks. Returns one block per real table. */
 function buildRuledTables(H, V, items){
   const res={ blocks:[], remaining:items.slice() };
-  if(H.length<2 || V.length<2) return res;
-  const tol=3.5;
-  const allX=clusterVals(V.map(l=>l.x), tol), allY=clusterVals(H.map(l=>l.y), tol);
-  if(allX.length<2 || allY.length<2) return res;
-  const rw=allX[allX.length-1]-allX[0], rh=allY[allY.length-1]-allY[0];
-  if(rw<80 || rh<24) return res;
-  // REAL separators: cluster segments sharing an x (or y) and require their COMBINED
-  // coverage to span most of the table. This accepts tables drawn cell-by-cell (many
-  // short edges add up to a full-height line) while rejecting logos/decorations
-  // (whose edges at any given x/y cover only a little of the region).
-  const colXs=clusterVals(V.map(l=>l.x), tol).filter(cx=>
-    unionLen(V.filter(l=>Math.abs(l.x-cx)<=tol).map(l=>[Math.min(l.y0,l.y1),Math.max(l.y0,l.y1)])) >= rh*0.5);
-  const rowYs=clusterVals(H.map(l=>l.y), tol).filter(cy=>
-    unionLen(H.filter(l=>Math.abs(l.y-cy)<=tol).map(l=>[Math.min(l.x0,l.x1),Math.max(l.x0,l.x1)])) >= rw*0.5);
-  if(colXs.length<3 || rowYs.length<3) return res;   // real grid: >=2 columns AND >=2 rows
-  const x0=colXs[0], x1=colXs[colXs.length-1], y0=rowYs[0], y1=rowYs[rowYs.length-1];
-  if(x1-x0<80 || y1-y0<24) return res;
-  const nrows=rowYs.length-1, ncols=colXs.length-1;
-  const cells=Array.from({length:nrows},()=>Array.from({length:ncols},()=>[]));
-  const remaining=[]; let inside=0;
-  for(const it of items){
-    const cx=it.x+(it.width||0)/2, cy=it.y;
-    if(cx>=x0-tol && cx<=x1+tol && cy>=y0-tol && cy<=y1+tol){
-      let r=-1; for(let i=0;i<nrows;i++){ if(cy>rowYs[i]-tol && cy<rowYs[i+1]+tol){ r=i; break; } }
-      let c=-1; for(let j=0;j<ncols;j++){ if(cx>colXs[j]-tol && cx<colXs[j+1]+tol){ c=j; break; } }
-      if(r>=0 && c>=0){ cells[r][c].push(it); inside++; continue; }
-    }
-    remaining.push(it);
+  if(!H.length || !V.length) return res;
+  const tol=4;
+  const nodes = H.map(l=>({t:'h', y:l.y, x0:Math.min(l.x0,l.x1), x1:Math.max(l.x0,l.x1)}))
+    .concat(V.map(l=>({t:'v', x:l.x, y0:Math.min(l.y0,l.y1), y1:Math.max(l.y0,l.y1)})));
+  const n=nodes.length; if(n>4000) return res;    // safety cap
+  const par=Array.from({length:n},(_,i)=>i);
+  const find=i=>{ while(par[i]!==i){ par[i]=par[par[i]]; i=par[i]; } return i; };
+  const cross=(h,v)=> v.x>=h.x0-tol && v.x<=h.x1+tol && h.y>=v.y0-tol && h.y<=v.y1+tol;
+  for(let i=0;i<n;i++) for(let j=i+1;j<n;j++){
+    const a=nodes[i], b=nodes[j];
+    if(a.t===b.t) continue;
+    if(a.t==='h' ? cross(a,b) : cross(b,a)) par[find(i)]=find(j);
   }
-  if(inside<4) return res;               // not really a populated table
-  // distribution sanity: a real table fills >=2 rows AND >=2 columns. A false
-  // grid over a letter dumps everything into one band -> reject it.
-  const rowsUsed=cells.filter(row=>row.some(c=>c.length)).length;
-  const colsUsed=Array.from({length:ncols},(_,j)=>cells.some(row=>row[j].length)).filter(Boolean).length;
-  if(rowsUsed<2 || colsUsed<2) return res;
-  const rows=cells.map(row=>row.map(ci=>{
-    if(!ci.length) return '';
-    ci.sort((a,b)=> a.y-b.y || a.x-b.x);
-    const lines=[]; let cur=null;
-    for(const it of ci){ if(cur && Math.abs(it.y-cur.y)<=Math.max(cur.size,it.size)*0.6) cur.items.push(it);
-      else { cur={y:it.y, size:it.size, items:[it]}; lines.push(cur); } }
-    return lines.map(ln=>{ ln.items.sort((a,b)=>a.x-b.x);
-      let s='',pr=null; for(const it of ln.items){ if(pr!==null && it.x-pr>it.size*0.3 && !/\s$/.test(s)) s+=' '; s+=it.str; pr=it.x+(it.width||0); }
-      return s.replace(/\s+/g,' ').trim();
-    }).filter(Boolean).join('\n');
-  }));
-  res.blocks.push({type:'table', y:y0, x0:x0, x1:x1, ruled:true, rows});
-  res.remaining=remaining;
+  const comps={}; for(let i=0;i<n;i++){ const r=find(i); (comps[r]=comps[r]||[]).push(nodes[i]); }
+  const used=new Set(); const blocks=[];
+  for(const key in comps){
+    const comp=comps[key];
+    const hs=comp.filter(l=>l.t==='h'), vs=comp.filter(l=>l.t==='v');
+    if(hs.length<2 || vs.length<2) continue;
+    const colXs=clusterVals(vs.map(l=>l.x), tol);
+    const rowYs=clusterVals(hs.map(l=>l.y), tol);
+    if(colXs.length<2 || rowYs.length<2) continue;
+    const x0=colXs[0], x1=colXs[colXs.length-1], y0=rowYs[0], y1=rowYs[rowYs.length-1];
+    if(x1-x0<80 || y1-y0<20) continue;
+    const nrows=rowYs.length-1, ncols=colXs.length-1;
+    const cells=Array.from({length:nrows},()=>Array.from({length:ncols},()=>[]));
+    let inside=0; const mine=[];
+    for(const it of items){ if(used.has(it)) continue;
+      const cx=it.x+(it.width||0)/2, cy=it.y;
+      if(cx>=x0-tol && cx<=x1+tol && cy>=y0-tol && cy<=y1+tol){
+        let r=-1; for(let a=0;a<nrows;a++){ if(cy>rowYs[a]-tol && cy<rowYs[a+1]+tol){ r=a; break; } }
+        let c=-1; for(let b=0;b<ncols;b++){ if(cx>colXs[b]-tol && cx<colXs[b+1]+tol){ c=b; break; } }
+        if(r>=0 && c>=0){ cells[r][c].push(it); mine.push(it); inside++; }
+      }
+    }
+    if(inside<4) continue;
+    const rowsUsed=cells.filter(row=>row.some(c=>c.length)).length;
+    const colsUsed=Array.from({length:ncols},(_,j)=>cells.some(row=>row[j].length)).filter(Boolean).length;
+    if(rowsUsed<2 || colsUsed<2) continue;         // real tables fill >=2 rows AND >=2 cols
+    mine.forEach(it=>used.add(it));
+    blocks.push({type:'table', y:y0, x0, x1, ruled:true, rows:cells.map(row=>row.map(cellText))});
+  }
+  res.blocks=blocks;
+  res.remaining=items.filter(it=>!used.has(it));
   return res;
 }
 /* Editable extractor: ruled tables (multi-line cells) + text flow. */
@@ -856,8 +859,19 @@ async function extractEditable(page, detectHead){
   let tableBlocks=[], remaining=items;
   try{ const {h,v}=await extractRules(page, vp); const rt=buildRuledTables(h,v,items); if(rt.blocks.length){ tableBlocks=rt.blocks; remaining=rt.remaining; } }
   catch(e){ console.error(e); }
+  // embedded images: render once so pdf.js resolves the image objects, then place
+  // each image at its correct vertical position (and horizontal alignment).
+  let imageBlocks=[];
+  try{
+    const rvp=page.getViewport({scale:1});
+    const c=document.createElement('canvas'); c.width=Math.ceil(rvp.width); c.height=Math.ceil(rvp.height);
+    await page.render({canvasContext:c.getContext('2d'), viewport:rvp}).promise;
+    imageBlocks=await extractImages(page, vp);
+    imageBlocks.forEach(im=>{ im.align=lineAlign(im.x0, im.x1, vp.width); });
+  }catch(e){ console.error(e); }
   let blocks=reconstructFlow(remaining, detectHead, vp.width);
   if(tableBlocks.length) blocks=blocks.concat(tableBlocks);
+  if(imageBlocks.length) blocks=blocks.concat(imageBlocks);
   return orderBlocks(blocks, vp.width);
 }
 
@@ -1010,10 +1024,13 @@ async function extractImages(page, vp){
       const wUnits=Math.hypot(ctm[0],ctm[1]), hUnits=Math.hypot(ctm[2],ctm[3]);
       if(wUnits<24 || hUnits<24) continue;                     // skip icons/bullets
       const M=pdfjsLib.Util.transform(vp.transform, ctm);
-      const ys=[M[3]*0+M[5], M[3]*1+M[5]]; const topY=Math.min(ys[0],ys[1]);
+      const pt=(x,y)=>({x:M[0]*x+M[2]*y+M[4], y:M[1]*x+M[3]*y+M[5]});
+      const cs=[pt(0,0),pt(1,0),pt(0,1),pt(1,1)];
+      const xs=cs.map(c=>c.x), yz=cs.map(c=>c.y);
+      const x0=Math.min(...xs), x1=Math.max(...xs), topY=Math.min(...yz);
       let obj=null; try{ obj=page.objs.get(name); }catch(e){ obj=null; }
       const dataUrl=imgObjToDataUrl(obj); if(!dataUrl) continue;
-      out.push({type:'image', dataUrl, y:topY, wpt:wUnits});
+      out.push({type:'image', dataUrl, y:topY, x0, x1, wpt:wUnits});
     }
   }
   return out;
@@ -1205,15 +1222,16 @@ function findGutter(items, pw){
   const rowList=Object.values(rows); if(rowList.length<6) return null;
   let best=null;
   for(let f=0.34; f<=0.66; f+=0.03){
-    const gx=pw*f; let cross=0, both=0;
+    const gx=pw*f; let over=0, both=0;
     for(const row of rowList){
-      let hasL=false,hasR=false,hasCross=false;
-      for(const it of row){ const l=it.x, r=it.x+(it.width||0); if(l<gx-6 && r>gx+6) hasCross=true; else if(r<=gx) hasL=true; else if(l>=gx) hasR=true; }
-      if(hasCross) cross++;
-      if((hasL||hasCross) && (hasR||hasCross)) {} // ignore
-      if(hasL && hasR) both++;
+      let hasL=false,hasR=false,onLine=false;
+      for(const it of row){ const l=it.x, r=it.x+(it.width||0);
+        if(l < gx+3 && r > gx-3) onLine=true;   // any text sitting on the gutter -> not a gutter here
+        if(r <= gx) hasL=true; else if(l >= gx) hasR=true; }
+      if(onLine) over++; else if(hasL && hasR) both++;
     }
-    if(cross <= rowList.length*0.10 && both >= rowList.length*0.40){ if(!best || cross<best.cross) best={gx,cross}; }
+    // a real gutter: almost no rows have text on the line, and most rows use BOTH sides
+    if(over <= rowList.length*0.08 && both >= rowList.length*0.45){ if(!best || over<best.over) best={gx,over}; }
   }
   return best ? best.gx : null;
 }
@@ -1316,8 +1334,9 @@ function buildWordDoc(model, opts){
         idx++; continue;
       }
       if(b.type==='image'){
+        const al = b.align==='left'?'left': b.align==='right'?'right':'center';
         const w=b.wpt?`width:${Math.round(b.wpt)}pt;`:'';
-        parts.push(`<p style="${pb}text-align:center;margin:8pt 0"><img src="${b.dataUrl}" style="${w}max-width:100%"></p>`);
+        parts.push(`<p style="${pb}text-align:${al};margin:6pt 0"><img src="${b.dataUrl}" style="${w}max-width:100%"></p>`);
         idx++; continue;
       }
       if(b.type==='table'){

@@ -1,6 +1,6 @@
 /* welovepdf service worker — network-first for app code so new deploys are
    picked up immediately; cache-first for heavy libs/icons; offline fallback. */
-const CACHE = 'welovepdf-v13';
+const CACHE = 'welovepdf-v15';
 const SHELL = [
   './', './index.html',
   './css/styles.css', './js/app.js',
