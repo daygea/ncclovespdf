@@ -1441,7 +1441,8 @@ const REG_KEY='ncc_cert_registry';
    amount, dates) — never the documents themselves.
    ============================================================ */
 const REGISTRY = {
-  url: 'https://script.google.com/macros/s/AKfycbwQ05wjR_ZZ14SLwJY1_va7SVGhJOtC2vgg0nUkluerDS_LKueh1qxT7_Y5qsZk0LEkfA/exec'   // e.g. 'https://script.google.com/macros/s/XXXXXXXX/exec'
+  url: 'https://script.google.com/macros/s/AKfycbz4hAzXy3G4RHlGXH2hXB6DsxbC-PXyT5xptDuLEUj_2b-Z29KVLgcwtvt_7P4rldqUyw/exec'  
+   // https://script.google.com/macros/s/AKfycbz4hAzXy3G4RHlGXH2hXB6DsxbC-PXyT5xptDuLEUj_2b-Z29KVLgcwtvt_7P4rldqUyw/exec
 };
 const registryEnabled = () => !!(REGISTRY.url && /^https?:\/\//.test(REGISTRY.url));
 
